@@ -1,242 +1,193 @@
-// C version of MATLAB's DIT_FFT_rad4 function with Radix-2 FFT and DFT comparison
+// Corrected Iterative Radix-4 FFT with float-only representation, RMS comparison to Radix-2
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <complex.h>
 #include <time.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-typedef double complex cplx;
+float *cos_table = NULL;
+float *sin_table = NULL;
 
-// Compute twiddle factor W_n^k
-cplx *compute_twiddle_radix4(int M, int k_mul) {
-    int L = M / 4;
-    cplx *W = malloc(L * sizeof(cplx));
-    for (int k = 0; k < L; ++k) {
-        double angle = -2 * M_PI * k_mul * k / M;
-        W[k] = cexp(I * angle);
+void precompute_twiddles(int N) {
+    cos_table = malloc((N / 2) * sizeof(float));
+    sin_table = malloc((N / 2) * sizeof(float));
+    for (int i = 0; i < N / 2; ++i) {
+        float angle = -2.0f * M_PI * i / N;
+        cos_table[i] = cosf(angle);
+        sin_table[i] = sinf(angle);
     }
-    return W;
 }
 
-int next_power_of_4(int n) {
-    int N = 1;
-    while (N < n) N <<= 2;
-    return N;
-}
-
-cplx *zero_pad_radix4(cplx *x, int len, int N) {
-    cplx *xin = calloc(N, sizeof(cplx));
-    for (int i = 0; i < len; i++) xin[i] = x[i];
-    return xin;
-}
-
-// Naive DFT for ground truth
-void naive_dft(cplx *in, cplx *out, int N) {
-    for (int k = 0; k < N; ++k) {
-        out[k] = 0;
-        for (int n = 0; n < N; ++n) {
-            double angle = -2 * M_PI * k * n / N;
-            out[k] += in[n] * cexp(I * angle);
+void bit_reverse_radix4(float *re, float *im, int N) {
+    int bits = log2(N) / 2;
+    for (int i = 0; i < N; ++i) {
+        int j = 0, x = i;
+        for (int b = 0; b < bits; ++b) {
+            j = (j << 2) | (x & 3);
+            x >>= 2;
+        }
+        if (j > i) {
+            float temp_re = re[i], temp_im = im[i];
+            re[i] = re[j]; im[i] = im[j];
+            re[j] = temp_re; im[j] = temp_im;
         }
     }
 }
-void radix4_fft_recursive(cplx *x, int N) {
-    if (N == 1) return;
-    int N4 = N / 4;
 
-    cplx *x0 = malloc(N4 * sizeof(cplx));
-    cplx *x1 = malloc(N4 * sizeof(cplx));
-    cplx *x2 = malloc(N4 * sizeof(cplx));
-    cplx *x3 = malloc(N4 * sizeof(cplx));
+void radix4_fft_iterative(float *re, float *im, int N) {
+    bit_reverse_radix4(re, im, N);
+    for (int len = 4; len <= N; len *= 4) {
+        int step = N / len;
+        for (int i = 0; i < N; i += len) {
+            for (int j = 0; j < len / 4; ++j) {
+                int idx1 = j * step;
+                int idx2 = 2 * idx1;
+                int idx3 = 3 * idx1;
 
-    for (int i = 0; i < N4; ++i) {
-        x0[i] = x[4 * i];
-        x1[i] = x[4 * i + 1];
-        x2[i] = x[4 * i + 2];
-        x3[i] = x[4 * i + 3];
-    }
+                float w1_re = cos_table[idx1], w1_im = sin_table[idx1];
+                float w2_re = cos_table[idx2], w2_im = sin_table[idx2];
+                float w3_re = cos_table[idx3], w3_im = sin_table[idx3];
 
-    radix4_fft_recursive(x0, N4);
-    radix4_fft_recursive(x1, N4);
-    radix4_fft_recursive(x2, N4);
-    radix4_fft_recursive(x3, N4);
+                int a = i + j;
+                int b = a + len / 4;
+                int c = b + len / 4;
+                int d = c + len / 4;
 
-    for (int k = 0; k < N4; ++k) {
-        double angle1 = -2 * M_PI * k / N;
-        double angle2 = -2 * M_PI * 2 * k / N;
-        double angle3 = -2 * M_PI * 3 * k / N;
-        cplx w1 = cexp(I * angle1);
-        cplx w2 = cexp(I * angle2);
-        cplx w3 = cexp(I * angle3);
+                float ar = re[a], ai = im[a];
+                float br = re[b], bi = im[b];
+                float cr = re[c], ci = im[c];
+                float dr = re[d], di = im[d];
 
-        cplx a0 = x0[k];
-        cplx a1 = x1[k] * w1;
-        cplx a2 = x2[k] * w2;
-        cplx a3 = x3[k] * w3;
+                float btr = br * w1_re - bi * w1_im;
+                float bti = br * w1_im + bi * w1_re;
+                float ctr = cr * w2_re - ci * w2_im;
+                float cti = cr * w2_im + ci * w2_re;
+                float dtr = dr * w3_re - di * w3_im;
+                float dti = dr * w3_im + di * w3_re;
 
-        cplx t0 = a0 + a2;
-        cplx t1 = a0 - a2;
-        cplx t2 = a1 + a3;
-        cplx t3 = I * (a1 - a3);
+                float t0r = ar + ctr;
+                float t0i = ai + cti;
+                float t1r = ar - ctr;
+                float t1i = ai - cti;
+                float t2r = btr + dtr;
+                float t2i = bti + dti;
+                float t3r = btr - dtr;
+                float t3i = bti - dti;
 
-        x[k] = t0 + t2;
-        x[k + N4] = t1 + t3;
-        x[k + 2 * N4] = t0 - t2;
-        x[k + 3 * N4] = t1 - t3;
-    }
-
-    free(x0); free(x1); free(x2); free(x3);
-}
-// Iterative in-place Radix-2 Cooley-Tukey FFT
-void radix2_fft(cplx *x, int N) {
-    int log2_N = log2(N);
-    for (int i = 0, j = 0; i < N; ++i) {
-        if (i < j) {
-            cplx tmp = x[i];
-            x[i] = x[j];
-            x[j] = tmp;
-        }
-        int m = N >> 1;
-        while (m >= 1 && j >= m) {
-            j -= m;
-            m >>= 1;
-        }
-        j += m;
-    }
-
-    for (int s = 1; s <= log2_N; ++s) {
-        int m = 1 << s;
-        cplx wm = cexp(-2.0 * I * M_PI / m);
-        for (int k = 0; k < N; k += m) {
-            cplx w = 1;
-            for (int j = 0; j < m / 2; ++j) {
-                cplx t = w * x[k + j + m / 2];
-                cplx u = x[k + j];
-                x[k + j] = u + t;
-                x[k + j + m / 2] = u - t;
-                w *= wm;
+                re[a] = t0r + t2r; im[a] = t0i + t2i;
+                re[b] = t1r + t3i; im[b] = t1i - t3r;
+                re[c] = t0r - t2r; im[c] = t0i - t2i;
+                re[d] = t1r - t3i; im[d] = t1i + t3r;
             }
         }
     }
 }
 
-// DIT FFT Radix-4
-cplx *DIT_FFT_rad4(cplx *x, int len, int N) {
-    if (N == 0) N = next_power_of_4(len);
-    if ((N & (N - 1)) != 0 || (int)(log(N)/log(4)) * 2 != (int)log2(N)) {
-        fprintf(stderr, "N must be a power of 4\n");
-        return NULL;
-    }
-    cplx *xin = (N >= len) ? zero_pad_radix4(x, len, N) : x;
-    int M = N;
-
-    int L = M / 4;
-    cplx *xo = malloc(L * sizeof(cplx));
-    cplx *x1 = malloc(L * sizeof(cplx));
-    cplx *x2 = malloc(L * sizeof(cplx));
-    cplx *x3 = malloc(L * sizeof(cplx));
-
-    for (int i = 0; i < L; ++i) {
-        xo[i] = xin[4 * i];
-        x1[i] = xin[4 * i + 1];
-        x2[i] = xin[4 * i + 2];
-        x3[i] = xin[4 * i + 3];
-    }
-
-    cplx *W1 = compute_twiddle_radix4(M, 1);
-    cplx *W2 = compute_twiddle_radix4(M, 2);
-    cplx *W3 = compute_twiddle_radix4(M, 3);
-
-    cplx *Y = malloc(L * sizeof(cplx));
-    cplx *Z = malloc(L * sizeof(cplx));
-    cplx *G = malloc(L * sizeof(cplx));
-    cplx *H = malloc(L * sizeof(cplx));
-
-    naive_dft(xo, Y, L);
-    naive_dft(x1, Z, L);
-    naive_dft(x2, G, L);
-    naive_dft(x3, H, L);
-
-    for (int i = 0; i < L; ++i) {
-        Z[i] *= W1[i];
-        G[i] *= W2[i];
-        H[i] *= W3[i];
-    }
-
-    cplx *X = malloc(M * sizeof(cplx));
-    for (int i = 0; i < L; ++i) {
-        X[i] = Y[i] + Z[i] + G[i] + H[i];
-        X[i + L] = Y[i] - I * Z[i] - G[i] + I * H[i];
-        X[i + 2 * L] = Y[i] - Z[i] + G[i] - H[i];
-        X[i + 3 * L] = Y[i] + I * Z[i] - G[i] - I * H[i];
-    }
-
-    free(xo); free(x1); free(x2); free(x3);
-    free(W1); free(W2); free(W3);
-    free(Y); free(Z); free(G); free(H);
-    if (xin != x) free(xin);
-    return X;
-}
-
-void print_fft(cplx *X, int N) {
-    for (int i = 0; i < N; ++i)
-        printf("X[%d] = %.5f + %.5fi\n", i, creal(X[i]), cimag(X[i]));
-}
-
-double compute_rms_error(cplx *a, cplx *b, int N) {
-    double sum = 0.0;
+void bit_reverse(float *re, float *im, int N) {
+    int j = 0;
     for (int i = 0; i < N; ++i) {
-        double re_diff = creal(a[i]) - creal(b[i]);
-        double im_diff = cimag(a[i]) - cimag(b[i]);
-        sum += re_diff * re_diff + im_diff * im_diff;
+        if (i < j) {
+            float temp_re = re[i], temp_im = im[i];
+            re[i] = re[j]; im[i] = im[j];
+            re[j] = temp_re; im[j] = temp_im;
+        }
+        int m = N >> 1;
+        while (j >= m && m > 0) {
+            j -= m;
+            m >>= 1;
+        }
+        j += m;
     }
-    return sqrt(sum / N);
 }
 
+void radix2_fft_float(float *re, float *im, int N) {
+    bit_reverse(re, im, N);
+    for (int s = 1; s <= log2(N); ++s) {
+        int m = 1 << s;
+        int step = N / m;
+        for (int k = 0; k < N; k += m) {
+            for (int j = 0; j < m / 2; ++j) {
+                int idx = j * step;
+                float w_re = cos_table[idx];
+                float w_im = sin_table[idx];
+
+                int t = k + j;
+                int u = k + j + m / 2;
+
+                float tre = w_re * re[u] - w_im * im[u];
+                float tim = w_re * im[u] + w_im * re[u];
+
+                float ure = re[t];
+                float uim = im[t];
+
+                re[t] = ure + tre;
+                im[t] = uim + tim;
+                re[u] = ure - tre;
+                im[u] = uim - tim;
+            }
+        }
+    }
+}
+
+void print_fft_float(float *re, float *im, int N, const char *label) {
+    printf("%s:\n", label);
+    for (int i = 0; i < N; ++i)
+        printf("X[%d] = %.5f + %.5fi\n", i, re[i], im[i]);
+}
+
+double compute_rms_error(float *re1, float *im1, float *re2, float *im2, int N) {
+    double err = 0.0;
+    for (int i = 0; i < N; ++i) {
+        double dr = re1[i] - re2[i];
+        double di = im1[i] - im2[i];
+        err += dr * dr + di * di;
+    }
+    return sqrt(err / N);
+}
 
 int main() {
-    int N = 64;
-    cplx *signal = malloc(N * sizeof(cplx));
-    for (int i = 0; i < N; ++i)
-        signal[i] = cos(2 * M_PI * 4 * i / N);
+    int N = 64*64;
+    float *re = malloc(N * sizeof(float));
+    float *im = calloc(N, sizeof(float));
 
-    // Radix-4 FFT
-    cplx *x_rad4 = malloc(N * sizeof(cplx));
-    for (int i = 0; i < N; ++i) x_rad4[i] = signal[i];
+    for (int i = 0; i < N; ++i)
+        re[i] = cosf(2 * M_PI * 4 * i / N);
+
+    float *re_r2 = malloc(N * sizeof(float));
+    float *im_r2 = calloc(N, sizeof(float));
+    float *re_r4 = malloc(N * sizeof(float));
+    float *im_r4 = calloc(N, sizeof(float));
+
+    for (int i = 0; i < N; ++i) {
+        re_r2[i] = re[i];
+        re_r4[i] = re[i];
+    }
+
+    precompute_twiddles(N);
+
     clock_t t1 = clock();
-    radix4_fft_recursive(x_rad4, N);
+    radix2_fft_float(re_r2, im_r2, N);
     clock_t t2 = clock();
 
-    // Radix-2 FFT
-    cplx *x_rad2 = malloc(N * sizeof(cplx));
-    for (int i = 0; i < N; ++i) x_rad2[i] = signal[i];
     clock_t t3 = clock();
-    radix2_fft(x_rad2, N);
+    radix4_fft_iterative(re_r4, im_r4, N);
     clock_t t4 = clock();
 
-    // Naive DFT
-    cplx *x_dft = malloc(N * sizeof(cplx));
-    clock_t t5 = clock();
-    naive_dft(signal, x_dft, N);
-    clock_t t6 = clock();
+    //print_fft_float(re_r2, im_r2, N, "Radix-2 FFT");
+    //print_fft_float(re_r4, im_r4, N, "Radix-4 FFT");
 
-    double time_r4 = (double)(t2 - t1) / CLOCKS_PER_SEC;
-    double time_r2 = (double)(t4 - t3) / CLOCKS_PER_SEC;
-    double time_dft = (double)(t6 - t5) / CLOCKS_PER_SEC;
+    printf("Execution Time (Radix-2 FFT): %.6f s\n", (double)(t2 - t1) / CLOCKS_PER_SEC);
+    printf("Execution Time (Radix-4 FFT): %.6f s\n", (double)(t4 - t3) / CLOCKS_PER_SEC);
 
-    double err_r4 = compute_rms_error(x_rad4, x_dft, N);
-    double err_r2 = compute_rms_error(x_rad2, x_dft, N);
+    double rms = compute_rms_error(re_r2, im_r2, re_r4, im_r4, N);
+    printf("RMS Error (Radix-2 vs Radix-4): %.10e\n", rms);
 
-    printf("Execution Time (Radix-4 FFT): %.6f s\n", time_r4);
-    printf("Execution Time (Radix-2 FFT): %.6f s\n", time_r2);
-    printf("Execution Time (Naive DFT):   %.6f s\n", time_dft);
-    printf("RMS Error (Radix-4 vs DFT): %.10e\n", err_r4);
-    printf("RMS Error (Radix-2 vs DFT): %.10e\n", err_r2);
-
-    free(signal); free(x_rad4); free(x_rad2); free(x_dft);
+    free(re); free(im);
+    free(re_r2); free(im_r2);
+    free(re_r4); free(im_r4);
+    free(cos_table); free(sin_table);
     return 0;
 }

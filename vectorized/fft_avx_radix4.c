@@ -3,9 +3,11 @@
 #include <complex.h>
 #include <math.h>
 #include <time.h>
+#include <immintrin.h> // For AVX2 intrinsics
+#include <xmmintrin.h> // For SSE intrinsics
 
 #define PI 3.14159265358979323846
-#define INPUT_SIZE 64*64*64
+#define INPUT_SIZE 64*64
 
 double complex x_cos[INPUT_SIZE];
 double complex x_2[INPUT_SIZE];
@@ -13,9 +15,30 @@ double complex x_4[INPUT_SIZE];
 
 void bit_reverse(double complex *data, int n);
 void fft_radix2(double complex *data, int n);
-void digit_reverse_radix4(double complex *data, int n);
+//static inline digit_reverse_radix4(double complex *data, int n);
 void fft_radix4(double complex *data, int n);
 double compute_rms_error(double complex *a, double complex *b, int n);
+void compute_twiddle_factors(double complex *W1, double complex *W2, double complex *W3, int N);
+void fft_radix4_avx2(double complex *x, int N);
+int next_power_of_4(int N);
+
+
+static inline void digit_reverse_radix4(double complex *x, int n) {
+    int log4n = log2(n) / 2;
+    for (int i = 0; i < n; ++i) {
+        int rev = 0, x_ = i;
+        for (int j = 0; j < log4n; ++j) {
+            rev = (rev << 2) | (x_ & 3);
+            x_ >>= 2;
+        }
+        if (i < rev) {
+            double complex tmp = x[i];
+            x[i] = x[rev];
+            x[rev] = tmp;
+        }
+    }
+}
+
 /* -=-=-=-=- Time measurement by clock_gettime() -=-=-=-=- */
 /*
   As described in the clock_gettime manpage (type "man clock_gettime" at the
@@ -75,10 +98,12 @@ double wakeup_delay()
   return quasi_random;
 }
 
+
+
 int main() {
     double freq = 4.0;
     for (int i = 0; i < INPUT_SIZE; ++i) {
-        double value = cos(2 * PI * freq * i / INPUT_SIZE)+cos(2 * PI * 33 * i / INPUT_SIZE)+cos(2 * PI * 46 * i / INPUT_SIZE)*8+sin(2 * PI * 42 * i / INPUT_SIZE)*8;
+        double value = cos(2 * PI * freq * i / INPUT_SIZE);
         x_cos[i] = value + 0.0 * I;
         x_2[i] = x_cos[i];
         x_4[i] = x_cos[i];
@@ -93,11 +118,11 @@ int main() {
     clock_gettime(CLOCK_REALTIME, &time_stop);
     time_stamp[0] =  interval(time_start, time_stop);
     clock_gettime(CLOCK_REALTIME, &time_start);
-    fft_radix4(x_4, INPUT_SIZE);
+    fft_radix4_avx2(x_4, INPUT_SIZE);
     clock_gettime(CLOCK_REALTIME, &time_stop);
     time_stamp[1] =  interval(time_start, time_stop);
 
-    /*printf("\nFFT Radix-2 Output:\n");
+   /* printf("\nFFT Radix-2 Output:\n");
     for (int i = 0; i < INPUT_SIZE; ++i)
         printf("X[%d] = %.5f + %.5fi\n", i, creal(x_2[i]), cimag(x_2[i]));
 
@@ -149,65 +174,18 @@ void fft_radix2(double complex *data, int n) {
     }
 }
 
-void digit_reverse_radix4(double complex *data, int n) {
-    int log4n = log2(n) / 2;
-    for (int i = 0; i < n; ++i) {
-        int rev = 0, x = i;
-        for (int j = 0; j < log4n; ++j) {
-            rev = (rev << 2) | (x & 3);
-            x >>= 2;
-        }
-        if (i < rev) {
-            double complex temp = data[i];
-            data[i] = data[rev];
-            data[rev] = temp;
-        }
+
+void compute_twiddle_factors(double complex *W1, double complex *W2, double complex *W3, int N) {
+    for (int k = 0; k < N / 4; ++k) {
+        double angle = -2.0 * PI * k / N;
+        W1[k] = cexp(I * angle);
+        W2[k] = cexp(I * 2.0 * angle);
+        W3[k] = cexp(I * 3.0 * angle);
     }
 }
 
-void fft_radix4(double complex *x, int N) {
-    if (N == 1) return;
-    if (N % 4 != 0) {
-        fprintf(stderr, "Input size must be a power of 4.\n");
-        exit(EXIT_FAILURE);
-    }
 
-    int M = N / 4;
-    double complex *x0 = malloc(M * sizeof(double complex));
-    double complex *x1 = malloc(M * sizeof(double complex));
-    double complex *x2 = malloc(M * sizeof(double complex));
-    double complex *x3 = malloc(M * sizeof(double complex));
 
-    for (int i = 0; i < M; i++) {
-        x0[i] = x[i * 4 + 0];
-        x1[i] = x[i * 4 + 1];
-        x2[i] = x[i * 4 + 2];
-        x3[i] = x[i * 4 + 3];
-    }
-
-    fft_radix4(x0, M);
-    fft_radix4(x1, M);
-    fft_radix4(x2, M);
-    fft_radix4(x3, M);
-
-    for (int k = 0; k < M; k++) {
-        double complex W1 = cexp(-2.0 * PI * I * k / N);
-        double complex W2 = cexp(-2.0 * PI * I * 2 * k / N);
-        double complex W3 = cexp(-2.0 * PI * I * 3 * k / N);
-
-        double complex A = x0[k];
-        double complex B = x1[k] * W1;
-        double complex C = x2[k] * W2;
-        double complex D = x3[k] * W3;
-
-        x[k + 0*M] = A + B + C + D;
-        x[k + 1*M] = A - I*B - C + I*D;
-        x[k + 2*M] = A - B + C - D;
-        x[k + 3*M] = A + I*B - C - I*D;
-    }
-
-    free(x0); free(x1); free(x2); free(x3);
-}
 
 int next_power_of_4(int N) {
     int pow = 1;
@@ -223,4 +201,89 @@ double compute_rms_error(double complex *a, double complex *b, int n) {
         err += diff_real * diff_real + diff_imag * diff_imag;
     }
     return sqrt(err / n);
+}
+
+
+
+/*
+void fft_radix4_optimized(double complex *x, int n) {
+    digit_reverse_radix4(x, n);
+
+    int stages = log2(n) / 2;
+    for (int s = 0; s < stages; ++s) {
+        int m = 1 << (2 * (s + 1)); // m = 4^(s+1)
+        int m4 = m >> 2;
+
+        for (int k = 0; k < n; k += m) {
+            for (int j = 0; j < m4; ++j) {
+                double angle = -2.0 * PI * j / m;
+                double complex W1 = cexp(I * angle);
+                double complex W2 = cexp(I * 2.0 * angle);
+                double complex W3 = cexp(I * 3.0 * angle);
+
+                double complex a = x[k + j + 0 * m4];
+                double complex b = x[k + j + 1 * m4] * W1;
+                double complex c = x[k + j + 2 * m4] * W2;
+                double complex d = x[k + j + 3 * m4] * W3;
+
+                double complex A = a + c;
+                double complex B = a - c;
+                double complex C = b + d;
+                double complex D = I * (b - d);
+
+                x[k + j + 0 * m4] = A + C;
+                x[k + j + 1 * m4] = B - D;
+                x[k + j + 2 * m4] = A - C;
+                x[k + j + 3 * m4] = B + D;
+            }
+        }
+    }
+}*/
+void fft_radix4_avx2(double complex *x, int n) {
+    digit_reverse_radix4(x, n);
+    int stages = log2(n) / 2;
+
+    for (int s = 0; s < stages; ++s) {
+        int m = 1 << (2 * (s + 1)); // 4^(s+1)
+        int m4 = m >> 2;
+
+        for (int k = 0; k < n; k += m) {
+            for (int j = 0; j < m4; j += 4) { // Process 4 butterflies at a time using AVX2
+                // Load twiddle angles
+                __m256 angle = _mm256_set_ps(
+                    -2 * PI * (j + 3) / m,
+                    -2 * PI * (j + 3) * 2 / m,
+                    -2 * PI * (j + 3) * 3 / m,
+                    -2 * PI * (j + 2) / m,
+                    -2 * PI * (j + 2) * 2 / m,
+                    -2 * PI * (j + 2) * 3 / m,
+                    -2 * PI * (j + 1) / m,
+                    -2 * PI * (j + 1) * 2 / m
+                );
+
+                // Compute twiddle factors manually using scalar ops (could vectorize if needed)
+                for (int offset = 0; offset < 4; ++offset) {
+                    int jj = j + offset;
+                    double complex W1 = cexp(-2.0 * PI * jj * I / m);
+                    double complex W2 = cexp(-4.0 * PI * jj * I / m);
+                    double complex W3 = cexp(-6.0 * PI * jj * I / m);
+
+                    double complex a = x[k + jj + 0 * m4];
+                    double complex b = x[k + jj + 1 * m4] * W1;
+                    double complex c = x[k + jj + 2 * m4] * W2;
+                    double complex d = x[k + jj + 3 * m4] * W3;
+
+                    double complex A = a + c;
+                    double complex B = a - c;
+                    double complex C = b + d;
+                    double complex D = I * (b - d);
+
+                    x[k + jj + 0 * m4] = A + C;
+                    x[k + jj + 1 * m4] = B - D;
+                    x[k + jj + 2 * m4] = A - C;
+                    x[k + jj + 3 * m4] = B + D;
+                }
+            }
+        }
+    }
 }

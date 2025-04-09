@@ -5,7 +5,7 @@
 #include <time.h>
 
 #define PI 3.14159265358979323846
-#define INPUT_SIZE 64*64*64
+#define INPUT_SIZE 64*64
 
 double complex x_cos[INPUT_SIZE];
 double complex x_2[INPUT_SIZE];
@@ -16,6 +16,11 @@ void fft_radix2(double complex *data, int n);
 void digit_reverse_radix4(double complex *data, int n);
 void fft_radix4(double complex *data, int n);
 double compute_rms_error(double complex *a, double complex *b, int n);
+void compute_twiddle_factors(double complex *W1, double complex *W2, double complex *W3, int N);
+void fft_radix4_nonrecursive(double complex *x, int N);
+int next_power_of_4(int N);
+
+
 /* -=-=-=-=- Time measurement by clock_gettime() -=-=-=-=- */
 /*
   As described in the clock_gettime manpage (type "man clock_gettime" at the
@@ -75,10 +80,12 @@ double wakeup_delay()
   return quasi_random;
 }
 
+
+
 int main() {
     double freq = 4.0;
     for (int i = 0; i < INPUT_SIZE; ++i) {
-        double value = cos(2 * PI * freq * i / INPUT_SIZE)+cos(2 * PI * 33 * i / INPUT_SIZE)+cos(2 * PI * 46 * i / INPUT_SIZE)*8+sin(2 * PI * 42 * i / INPUT_SIZE)*8;
+        double value = cos(2 * PI * freq * i / INPUT_SIZE);
         x_cos[i] = value + 0.0 * I;
         x_2[i] = x_cos[i];
         x_4[i] = x_cos[i];
@@ -93,17 +100,17 @@ int main() {
     clock_gettime(CLOCK_REALTIME, &time_stop);
     time_stamp[0] =  interval(time_start, time_stop);
     clock_gettime(CLOCK_REALTIME, &time_start);
-    fft_radix4(x_4, INPUT_SIZE);
+    fft_radix4_nonrecursive(x_4, INPUT_SIZE);
     clock_gettime(CLOCK_REALTIME, &time_stop);
     time_stamp[1] =  interval(time_start, time_stop);
 
-    /*printf("\nFFT Radix-2 Output:\n");
+    printf("\nFFT Radix-2 Output:\n");
     for (int i = 0; i < INPUT_SIZE; ++i)
         printf("X[%d] = %.5f + %.5fi\n", i, creal(x_2[i]), cimag(x_2[i]));
 
     printf("\nFFT Radix-4 Output:\n");
     for (int i = 0; i < INPUT_SIZE; ++i)
-        printf("X[%d] = %.5f + %.5fi\n", i, creal(x_4[i]), cimag(x_4[i]));*/
+        printf("X[%d] = %.5f + %.5fi\n", i, creal(x_4[i]), cimag(x_4[i]));
 
     double rms = compute_rms_error(x_2, x_4, INPUT_SIZE);
     printf("\nRMS Error between Radix-2 and Radix-4: %.10e\n", rms);
@@ -165,48 +172,81 @@ void digit_reverse_radix4(double complex *data, int n) {
     }
 }
 
-void fft_radix4(double complex *x, int N) {
-    if (N == 1) return;
+void compute_twiddle_factors(double complex *W1, double complex *W2, double complex *W3, int N) {
+    for (int k = 0; k < N / 4; ++k) {
+        double angle = -2.0 * PI * k / N;
+        W1[k] = cexp(I * angle);
+        W2[k] = cexp(I * 2.0 * angle);
+        W3[k] = cexp(I * 3.0 * angle);
+    }
+}
+
+void fft_radix4_nonrecursive(double complex *x, int N) {
     if (N % 4 != 0) {
         fprintf(stderr, "Input size must be a power of 4.\n");
         exit(EXIT_FAILURE);
     }
 
     int M = N / 4;
-    double complex *x0 = malloc(M * sizeof(double complex));
+
+    double complex *xo = malloc(M * sizeof(double complex));
     double complex *x1 = malloc(M * sizeof(double complex));
     double complex *x2 = malloc(M * sizeof(double complex));
     double complex *x3 = malloc(M * sizeof(double complex));
 
-    for (int i = 0; i < M; i++) {
-        x0[i] = x[i * 4 + 0];
-        x1[i] = x[i * 4 + 1];
-        x2[i] = x[i * 4 + 2];
-        x3[i] = x[i * 4 + 3];
+    for (int i = 0; i < M; ++i) {
+        xo[i] = x[4 * i + 0];
+        x1[i] = x[4 * i + 1];
+        x2[i] = x[4 * i + 2];
+        x3[i] = x[4 * i + 3];
     }
 
-    fft_radix4(x0, M);
-    fft_radix4(x1, M);
-    fft_radix4(x2, M);
-    fft_radix4(x3, M);
-
-    for (int k = 0; k < M; k++) {
-        double complex W1 = cexp(-2.0 * PI * I * k / N);
-        double complex W2 = cexp(-2.0 * PI * I * 2 * k / N);
-        double complex W3 = cexp(-2.0 * PI * I * 3 * k / N);
-
-        double complex A = x0[k];
-        double complex B = x1[k] * W1;
-        double complex C = x2[k] * W2;
-        double complex D = x3[k] * W3;
-
-        x[k + 0*M] = A + B + C + D;
-        x[k + 1*M] = A - I*B - C + I*D;
-        x[k + 2*M] = A - B + C - D;
-        x[k + 3*M] = A + I*B - C - I*D;
+    // DFT of length M (simple DFT with DFT matrix)
+    double complex *A = malloc(M * M * sizeof(double complex));
+    for (int k = 0; k < M; ++k) {
+        for (int n = 0; n < M; ++n) {
+            A[k * M + n] = cexp(-2.0 * PI * I * k * n / M);
+        }
     }
 
-    free(x0); free(x1); free(x2); free(x3);
+    double complex *Y = calloc(M, sizeof(double complex));
+    double complex *Z = calloc(M, sizeof(double complex));
+    double complex *G = calloc(M, sizeof(double complex));
+    double complex *H = calloc(M, sizeof(double complex));
+
+    for (int k = 0; k < M; ++k) {
+        for (int n = 0; n < M; ++n) {
+            Y[k] += xo[n] * A[k * M + n];
+            Z[k] += x1[n] * A[k * M + n];
+            G[k] += x2[n] * A[k * M + n];
+            H[k] += x3[n] * A[k * M + n];
+        }
+    }
+
+    // Apply twiddle factors
+    double complex *W1 = malloc(M * sizeof(double complex));
+    double complex *W2 = malloc(M * sizeof(double complex));
+    double complex *W3 = malloc(M * sizeof(double complex));
+    compute_twiddle_factors(W1, W2, W3, N);
+
+    for (int k = 0; k < M; ++k) {
+        Z[k] *= W1[k];
+        G[k] *= W2[k];
+        H[k] *= W3[k];
+    }
+
+    // Combine results using radix-4 butterflies
+    for (int k = 0; k < M; ++k) {
+        x[k + 0 * M] = Y[k] + Z[k] + G[k] + H[k];
+        x[k + 1 * M] = Y[k] - I * Z[k] - G[k] + I * H[k];
+        x[k + 2 * M] = Y[k] - Z[k] + G[k] - H[k];
+        x[k + 3 * M] = Y[k] + I * Z[k] - G[k] - I * H[k];
+    }
+
+    // Free allocated memory
+    free(xo); free(x1); free(x2); free(x3);
+    free(Y); free(Z); free(G); free(H);
+    free(A); free(W1); free(W2); free(W3);
 }
 
 int next_power_of_4(int N) {

@@ -9,36 +9,39 @@
 #define PI 3.14159265358979323846
 
 // Function to perform FFT on a 1D array (https://www.youtube.com/watch?app=desktop&v=h7apO7q16V0&t=484s)
-void fft(double complex *data, int n) {
+void fft(vector<complex<double>>& data) {
+    int n = data.size();
     if (n <= 1) return;
 
-    int half = n / 2;
-    double complex *even = malloc(half * sizeof(double complex));
-    double complex *odd  = malloc(half * sizeof(double complex));
-    if (!even || !odd) {
-        fprintf(stderr, "Memory allocation error.\n");
-        exit(1);
+    // Bit-reversal permutation
+    int logN = log2(n);
+    vector<complex<double>> temp(n);
+    for (int i = 0; i < n; ++i) {
+        int reversed = 0;
+        for (int j = 0; j < logN; ++j) {
+            if (i & (1 << j)) {
+                reversed |= (1 << (logN - 1 - j));
+            }
+        }
+        temp[reversed] = data[i];
     }
+    data = temp;
 
-    // Divide
-    for (int i = 0; i < half; i++) {
-        even[i] = data[i * 2];
-        odd[i]  = data[i * 2 + 1];
+    // Iterative FFT
+    for (int s = 1; s <= logN; ++s) {
+        int m = 1 << s; // 2^s
+        complex<double> wm = exp(-2.0 * PI * complex<double>(0, 1) / double(m));
+        for (int k = 0; k < n; k += m) {
+            complex<double> w = 1;
+            for (int j = 0; j < m / 2; ++j) {
+                complex<double> t = w * data[k + j + m / 2];
+                complex<double> u = data[k + j];
+                data[k + j] = u + t;
+                data[k + j + m / 2] = u - t;
+                w *= wm;
+            }
+        }
     }
-
-    // Conquer
-    fft(even, half);
-    fft(odd, half);
-
-    // Combine
-    for (int k = 0; k < half; k++) {
-        double complex omega = cexp(-2.0 * PI * I * k / n);
-        data[k]         = even[k] + omega * odd[k];
-        data[k + half]  = even[k] - omega * odd[k];
-    }
-
-    free(even);
-    free(odd);
 }
 
 // Function to read the matrix input data

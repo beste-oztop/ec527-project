@@ -149,7 +149,7 @@ double compute_rms_error(float *re1, float *im1, float *re2, float *im2, int N) 
 }
 
 int main() {
-    int N = 64*64;
+    int N = 64*64*64;
     float *re = malloc(N * sizeof(float));
     float *im = calloc(N, sizeof(float));
 

@@ -9,13 +9,16 @@
 #define PI 3.14159265358979323846
 
 // Function to perform FFT on a 1D array (https://www.youtube.com/watch?app=desktop&v=h7apO7q16V0&t=484s)
-void fft(vector<complex<double>>& data) {
-    int n = data.size();
+void fft(double complex *data, int n) {
     if (n <= 1) return;
 
     // Bit-reversal permutation
     int logN = log2(n);
-    vector<complex<double>> temp(n);
+    double complex *temp = malloc(n * sizeof(double complex));
+    if (!temp) {
+        fprintf(stderr, "Memory allocation error.\n");
+        exit(1);
+    }
     for (int i = 0; i < n; ++i) {
         int reversed = 0;
         for (int j = 0; j < logN; ++j) {
@@ -25,17 +28,18 @@ void fft(vector<complex<double>>& data) {
         }
         temp[reversed] = data[i];
     }
-    data = temp;
+    memcpy(data, temp, n * sizeof(double complex));
+    free(temp);
 
     // Iterative FFT
     for (int s = 1; s <= logN; ++s) {
         int m = 1 << s; // 2^s
-        complex<double> wm = exp(-2.0 * PI * complex<double>(0, 1) / double(m));
+        double complex wm = cexp(-2.0 * PI * I / m);
         for (int k = 0; k < n; k += m) {
-            complex<double> w = 1;
+            double complex w = 1.0;
             for (int j = 0; j < m / 2; ++j) {
-                complex<double> t = w * data[k + j + m / 2];
-                complex<double> u = data[k + j];
+                double complex t = w * data[k + j + m / 2];
+                double complex u = data[k + j];
                 data[k + j] = u + t;
                 data[k + j + m / 2] = u - t;
                 w *= wm;

@@ -1,3 +1,5 @@
+/* perf stat -e cache-references,cache-misses ./fft_main 2 12 1 */
+
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>

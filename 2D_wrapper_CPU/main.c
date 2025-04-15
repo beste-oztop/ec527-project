@@ -72,45 +72,54 @@ int main(int argc, char *argv[]) {
     fclose(fpfftInput);
     printf("read input signal data finished !\n");
 
-    clock_t start_fft = clock();
-    fft_radix2_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 1);
-    clock_t end_fft = clock();
-    double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
-    printf("FFT time-Radix2 DIF: %f seconds\n", time_fft);
-
-    start_fft = clock();
-    fft_radix2_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 0);
-    end_fft = clock();
-    time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
-    printf("FFT time-Radix2 DIT: %f seconds\n", time_fft);
-
-    fftRadix=4;
-    fftStage=fftStage/2;
-    start_fft = clock();
-    fft_radix4_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 1);
-    end_fft = clock();
-    time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
-    printf("FFT time-Radix4 DIF: %f seconds\n", time_fft);
-
-    start_fft = clock();
-    fft_radix4_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 0);
-    end_fft = clock();
-    time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
-    printf("FFT time-Radix4 DIT: %f seconds\n", time_fft);
-
-    fftRadix=8;
-    fftStage=fftStage/3;
-    start_fft = clock();
-    fft_radix8_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 1);
-    end_fft = clock();
-    time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
-    printf("FFT time-Radix8 DIF: %f seconds\n", time_fft);
-    start_fft = clock();
-    fft_radix8_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 0);
-    end_fft = clock();
-    time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
-    printf("FFT time-Radix8 DIT: %f seconds\n", time_fft);
-
+    // Switch case between different FFT types
+    switch (fftRadix){
+        case 2:
+            if(fftType == DIT){
+                clock_t start_fft = clock();
+                fft_radix2_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 0);
+                clock_t end_fft = clock();
+                double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+                printf("FFT time-Radix2 DIT: %f seconds\n", time_fft);
+            }else{
+                clock_t start_fft = clock();
+                fft_radix2_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 1);
+                clock_t end_fft = clock();
+                double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+                printf("FFT time-Radix2 DIF: %f seconds\n", time_fft);
+            }
+            break;
+        case 4:
+            if(fftType == DIT){
+                clock_t start_fft = clock();
+                fft_radix4_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 0);
+                clock_t end_fft = clock();
+                double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+                printf("FFT time-Radix4 DIT: %f seconds\n", time_fft);
+            }else{
+                clock_t start_fft = clock();
+                fft_radix4_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 1);
+                clock_t end_fft = clock();
+                double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+                printf("FFT time-Radix4 DIF: %f seconds\n", time_fft);
+            }
+            break;
+        case 8:
+            if(fftType == DIT){
+                clock_t start_fft = clock();
+                fft_radix8_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 0);
+                clock_t end_fft = clock();
+                double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+                printf("FFT time-Radix8 DIT: %f seconds\n", time_fft);
+            }else{
+                clock_t start_fft = clock();
+                fft_radix8_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 1);
+                clock_t end_fft = clock();
+                double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+                printf("FFT time-Radix8 DIF: %f seconds\n", time_fft);
+            }
+            break;
+    }
 
     free(signal);
     free(fftInput);

@@ -5,12 +5,13 @@
 #include <stdlib.h>
 #include <math.h>
 #include <stdbool.h>
-
+#include <string.h>
 typedef unsigned int u32;
 typedef unsigned short u16;
 typedef char u8;
 #define DIT 0 
 #define DIF 1 
+#define ARRAY_SIZE 2048
 typedef struct _complexFloat{
     float re;
     float im;
@@ -23,6 +24,8 @@ int fft_radix4_DIT( complexFloat *input,  complexFloat *output, bool IFFT, int f
 int fft_radix4_DIF( complexFloat *input,  complexFloat *output, bool IFFT, int fftRadix, int fftStage, int fftLength, int fftType);
 int fft_radix8_DIT(complexFloat *input,  complexFloat *output, bool IFFT, int fftRadix, int fftStage, int fftLength, int fftType);
 int fft_radix8_DIF( complexFloat *input,  complexFloat *output, bool IFFT, int fftRadix, int fftStage, int fftLength, int fftType);
+int FFT2D_Radix2(complexFloat *data, int height, int width);
+int readMatrix(const char *filename, complexFloat **data, int *height, int *width);
 static complexFloat complexAdd( complexFloat A, complexFloat B);
 static complexFloat complexSub( complexFloat A, complexFloat B);
 static complexFloat complexMul( complexFloat A, complexFloat B);
@@ -32,14 +35,20 @@ static complexFloat getWeight( int iButterfly, int indexWeight, int fftLength);
 
 
 int main(int argc, char *argv[]) {
-    if (argc != 4) {
-        printf("Usage: %s <fftRadix: 2|4|8> <fftStage> <fftType: 0 (DIT) | 1 (DIF)>\n", argv[0]);
+    if (argc != 5) {
+        printf("Usage: %s <input_file.txt> <fftRadix: 2|4|8> <fftStage> <fftType: 0 (DIT) | 1 (DIF)>\n", argv[0]);
         return 1;
     }
 
-    int fftRadix = atoi(argv[1]);
-    int fftStage = atoi(argv[2]);
-    int fftType = atoi(argv[3]);
+    // Read the matrix input data
+    complexFloat *data;
+    int height, width;
+    if (!readMatrix(argv[1], &data, &height, &width)) {
+        return 1;
+    }
+    int fftRadix = atoi(argv[2]);
+    int fftStage = atoi(argv[3]);
+    int fftType = atoi(argv[4]);
     int fftLength = (int)pow(fftRadix, fftStage);
     printf("fftLength = %d\n", fftLength);
     printf("fftType = %d\n", fftType);
@@ -90,6 +99,21 @@ int main(int argc, char *argv[]) {
                 double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
                 printf("FFT time-Radix2 DIF: %f seconds\n", time_fft);
             }
+            clock_t start_fft = clock();
+            FFT2D_Radix2(data, height, width);
+            FILE *outputFile = fopen("2DFFT_output_c.txt", "w");
+            if (outputFile == NULL) {
+                printf("Error: Could not open file for writing.\n");
+                return 1;
+            }
+            for (int i = 0; i < height * width; i++) {
+                fprintf(outputFile, "%f %f\n", data[i].re, data[i].im);
+            }
+            fclose(outputFile);
+            free(data);
+            clock_t end_fft = clock();
+            double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+            printf("2DFFT time-Radix2 DIT: %f seconds\n", time_fft);
             break;
         case 4:
             if(fftType == DIT){
@@ -522,6 +546,119 @@ int fft_radix8_DIT(complexFloat *input, complexFloat *output, bool IFFT, int fft
 }
 
 
+int readMatrix(const char *filename, complexFloat **data, int *height, int *width) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        fprintf(stderr, "Error opening file: %s\n", filename);
+        return 0;
+    }
+
+    char line[ARRAY_SIZE];
+    int h = 0, w = 0;
+    char *token;
+
+    // First pass: Determine dimensions
+    while (fgets(line, sizeof(line), file) != NULL) {
+        int count = 0;
+        token = strtok(line, " \t\n");
+        while (token) {
+            count++;
+            token = strtok(NULL, " \t\n");
+        }
+        if (count > 0) {
+            if (h == 0) {
+                w = count;
+            } else if (count != w) {
+                fprintf(stderr, "Error: Inconsistent number of columns in matrix rows.\n");
+                fclose(file);
+                return 0;
+            }
+            h++;
+        }
+    }
+
+    if (h == 0 || w == 0) {
+        fprintf(stderr, "Error: No valid data found in file.\n");
+        fclose(file);
+        return 0;
+    }
+
+    *height = h;
+    *width = w;
+    *data = malloc(h * w * sizeof(complexFloat));
+    if (!*data) {
+        fprintf(stderr, "Memory allocation error.\n");
+        fclose(file);
+        return 0;
+    }
+
+    // Second pass: Read data
+    rewind(file);
+    int idx = 0;
+    while (fgets(line, sizeof(line), file) != NULL) {
+        token = strtok(line, " \t\n");
+        while (token) {
+            if (idx >= h * w) {
+                fprintf(stderr, "Error: More data than expected.\n");
+                free(*data);
+                fclose(file);
+                return 0;
+            }
+            double val = atof(token);
+            (*data)[idx].re = val; // Assign real part
+            (*data)[idx].im = 0.0; // Assign imaginary part as 0
+            idx++;
+            token = strtok(NULL, " \t\n");
+        }
+    }
+
+    if (idx != h * w) {
+        fprintf(stderr, "Error: Less data than expected.\n");
+        free(*data);
+        fclose(file);
+        return 0;
+    }
+
+    fclose(file);
+    return 1;
+}
+
+int FFT2D_Radix2(complexFloat *data, int height, int width) {
+    // Perform FFT on each row
+    complexFloat *row = malloc(width * sizeof(complexFloat));
+    if (!row) {
+        fprintf(stderr, "Memory allocation error.\n");
+        exit(1);
+    }
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            row[j] = data[i * width + j];
+        }
+        fft_radix2_DIT(row, row, false, 2, (int)log2(width), width, 0);
+        for (int j = 0; j < width; j++) {
+            data[i * width + j] = row[j];
+        }
+    }
+    free(row);
+
+    // Perform FFT on each column
+    complexFloat *col = malloc(height * sizeof(complexFloat));
+    if (!col) {
+        fprintf(stderr, "Memory allocation error.\n");
+        exit(1);
+    }
+    for (int j = 0; j < width; j++) {
+        for (int i = 0; i < height; i++) {
+            col[i] = data[i * width + j];
+        }
+        fft_radix2_DIT(col, col, false, 2, (int)log2(height), height, 0);
+        for (int i = 0; i < height; i++) {
+            data[i * width + j] = col[i];
+        }
+    }
+    free(col);
+    return 0;
+}
 
 
 static u32 reverseBit(

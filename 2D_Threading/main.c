@@ -47,6 +47,33 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    #pragma omp parallel for
+    for(i=0; i<1; i++) {
+        ognt = omp_get_num_threads();
+    }
+
+    printf("omp's default number of threads is %d\n", ognt);
+
+    /* If this is illegal (0 or less), default to the "#define THREADS"
+        value that is defined above */
+    if (ognt <= 0) {
+        if (THREADS != ognt) {
+        printf("Overriding with #define THREADS value %d\n", THREADS);
+        ognt = THREADS;
+        }
+    }
+
+    omp_set_num_threads(ognt);
+
+    /* Once again ask OpenMP how many threads it is going to use */
+    #pragma omp parallel for
+    for(i=0; i<1; i++) {
+        ognt = omp_get_num_threads();
+    }
+    printf("Using %d threads for OpenMP\n", ognt);
+    }
+
+
     // Read the matrix input data
     complexFloat *data;
     int height, width;

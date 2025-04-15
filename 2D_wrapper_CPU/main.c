@@ -11,7 +11,7 @@ typedef unsigned short u16;
 typedef char u8;
 #define DIT 0 
 #define DIF 1 
-#define ARRAY_SIZE 2048
+#define ARRAY_SIZE 4096*3
 typedef struct _complexFloat{
     float re;
     float im;
@@ -26,6 +26,10 @@ int fft_radix8_DIT(complexFloat *input,  complexFloat *output, bool IFFT, int ff
 int fft_radix8_DIF( complexFloat *input,  complexFloat *output, bool IFFT, int fftRadix, int fftStage, int fftLength, int fftType);
 int FFT2D_Radix2_DIT(complexFloat *data, int height, int width);
 int FFT2D_Radix2_DIF(complexFloat *data, int height, int width);
+int FFT2D_Radix4_DIT(complexFloat *data, int height, int width);
+int FFT2D_Radix4_DIF(complexFloat *data, int height, int width);
+int FFT2D_Radix8_DIT(complexFloat *data, int height, int width);
+int FFT2D_Radix8_DIF(complexFloat *data, int height, int width);
 int readMatrix(const char *filename, complexFloat **data, int *height, int *width);
 static complexFloat complexAdd( complexFloat A, complexFloat B);
 static complexFloat complexSub( complexFloat A, complexFloat B);
@@ -97,6 +101,8 @@ int main(int argc, char *argv[]) {
                 // 2DFFT Radix2 DIT
                 clock_t start_2fft = clock();
                 FFT2D_Radix2_DIT(data, height, width);
+                clock_t end_2fft = clock();
+                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
                 FILE *outputFile = fopen("2DFFT_Radix2_output_c_DIT.txt", "w");
                 if (outputFile == NULL) {
                     printf("Error: Could not open file for writing.\n");
@@ -107,8 +113,6 @@ int main(int argc, char *argv[]) {
                 }
                 fclose(outputFile);
                 free(data);
-                clock_t end_2fft = clock();
-                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
                 printf("2DFFT time-Radix2 DIT: %f seconds\n", time_2fft);
 
             }else{
@@ -121,6 +125,8 @@ int main(int argc, char *argv[]) {
                 // 2DFFT Radix2 DIF
                 clock_t start_2fft = clock();
                 FFT2D_Radix2_DIF(data, height, width);
+                clock_t end_2fft = clock();
+                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
                 FILE *outputFile = fopen("2DFFT_Radix2_output_c_DIF.txt", "w");
                 if (outputFile == NULL) {
                     printf("Error: Could not open file for writing.\n");
@@ -131,8 +137,6 @@ int main(int argc, char *argv[]) {
                 }
                 fclose(outputFile);
                 free(data);
-                clock_t end_2fft = clock();
-                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
                 printf("2DFFT time-Radix2 DIT: %f seconds\n", time_2fft);
             }
             break;
@@ -143,12 +147,45 @@ int main(int argc, char *argv[]) {
                 clock_t end_fft = clock();
                 double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
                 printf("FFT time-Radix4 DIT: %f seconds\n", time_fft);
+                // 2DFFT Radix4 DIT
+                clock_t start_2fft = clock();
+                FFT2D_Radix4_DIT(data, height, width);
+                clock_t end_2fft = clock();
+                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
+                FILE *outputFile = fopen("2DFFT_Radix4_output_c_DIT.txt", "w");
+                if (outputFile == NULL) {
+                    printf("Error: Could not open file for writing.\n");
+                    return 1;
+                }
+                for (int i = 0; i < height * width; i++) {
+                    fprintf(outputFile, "%f %f\n", data[i].re, data[i].im);
+                }
+                fclose(outputFile);
+                free(data);
+                printf("2DFFT time-Radix4 DIT: %f seconds\n", time_2fft);
             }else{
                 clock_t start_fft = clock();
                 fft_radix4_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 1);
                 clock_t end_fft = clock();
                 double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
                 printf("FFT time-Radix4 DIF: %f seconds\n", time_fft);
+                // 2DFFT Radix4 DIF
+                clock_t start_2fft = clock();
+                FFT2D_Radix4_DIF(data, height, width);
+                clock_t end_2fft = clock();
+                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
+                FILE *outputFile = fopen("2DFFT_Radix4_output_c_DIF.txt", "w");
+                if (outputFile == NULL) {
+                    printf("Error: Could not open file for writing.\n");
+                    return 1;
+                }
+                for (int i = 0; i < height * width; i++) {
+                    fprintf(outputFile, "%f %f\n", data[i].re, data[i].im);
+                }
+                fclose(outputFile);
+                free(data);
+                printf("2DFFT time-Radix4 DIF: %f seconds\n", time_2fft);
+
             }
             break;
         case 8:
@@ -158,12 +195,45 @@ int main(int argc, char *argv[]) {
                 clock_t end_fft = clock();
                 double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
                 printf("FFT time-Radix8 DIT: %f seconds\n", time_fft);
+                // 2DFFT Radix8 DIT
+                clock_t start_2fft = clock();
+                FFT2D_Radix8_DIT(data, height, width);
+                clock_t end_2fft = clock();
+                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
+                FILE *outputFile = fopen("2DFFT_Radix8_output_c_DIT.txt", "w");
+                if (outputFile == NULL) {
+                    printf("Error: Could not open file for writing.\n");
+                    return 1;
+                }
+                for (int i = 0; i < height * width; i++) {
+                    fprintf(outputFile, "%f %f\n", data[i].re, data[i].im);
+                }
+                fclose(outputFile);
+                free(data);
+                printf("2DFFT time-Radix8 DIT: %f seconds\n", time_2fft);
             }else{
                 clock_t start_fft = clock();
                 fft_radix8_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 1);
                 clock_t end_fft = clock();
                 double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
                 printf("FFT time-Radix8 DIF: %f seconds\n", time_fft);
+
+                // 2DFFT Radix8 DIF
+                clock_t start_2fft = clock();
+                FFT2D_Radix8_DIF(data, height, width);
+                clock_t end_2fft = clock();
+                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
+                FILE *outputFile = fopen("2DFFT_Radix8_output_c_DIF.txt", "w");
+                if (outputFile == NULL) {
+                    printf("Error: Could not open file for writing.\n");
+                    return 1;
+                }
+                for (int i = 0; i < height * width; i++) {
+                    fprintf(outputFile, "%f %f\n", data[i].re, data[i].im);
+                }
+                fclose(outputFile);
+                free(data);
+                printf("2DFFT time-Radix8 DIF: %f seconds\n", time_2fft);
             }
             break;
     }
@@ -716,6 +786,151 @@ int FFT2D_Radix2_DIF(complexFloat *data, int height, int width) {
     }
     free(col);
     return 0;
+}
+
+int FFT2D_Radix4_DIT(complexFloat *data, int height, int width){
+    // Perform FFT on each row
+    complexFloat *row = malloc(width * sizeof(complexFloat));
+    if (!row) {
+        fprintf(stderr, "Memory allocation error.\n");
+        exit(1);
+    }
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            row[j] = data[i * width + j];
+        }
+        fft_radix4_DIT(row, row, false, 4, (int)log2(width)/2, width, 0);
+        for (int j = 0; j < width; j++) {
+            data[i * width + j] = row[j];
+        }
+    }
+    free(row);
+
+    // Perform FFT on each column
+    complexFloat *col = malloc(height * sizeof(complexFloat));
+    if (!col) {
+        fprintf(stderr, "Memory allocation error.\n");
+        exit(1);
+    }
+    for (int j = 0; j < width; j++) {
+        for (int i = 0; i < height; i++) {
+            col[i] = data[i * width + j];
+        }
+        fft_radix4_DIT(col, col, false, 4, (int)log2(height)/2, height, 0);
+        for (int i = 0; i < height; i++) {
+            data[i * width + j] = col[i];
+        }
+    }
+    free(col);
+    return 0;
+} 
+
+int FFT2D_Radix4_DIF(complexFloat *data, int height, int width){
+    // Perform FFT on each row
+    complexFloat *row = malloc(width * sizeof(complexFloat));
+    if (!row) {
+        fprintf(stderr, "Memory allocation error.\n");
+        exit(1);
+    }
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            row[j] = data[i * width + j];
+        }
+        fft_radix4_DIF(row, row, false, 4, (int)log2(width)/2, width, 0);
+        for (int j = 0; j < width; j++) {
+            data[i * width + j] = row[j];
+        }
+    }
+    free(row);
+
+    // Perform FFT on each column
+    complexFloat *col = malloc(height * sizeof(complexFloat));
+    if (!col) {
+        fprintf(stderr, "Memory allocation error.\n");
+        exit(1);
+    }
+    for (int j = 0; j < width; j++) {
+        for (int i = 0; i < height; i++) {
+            col[i] = data[i * width + j];
+        }
+        fft_radix4_DIF(col, col, false, 4, (int)log2(height)/2, height, 0);
+        for (int i = 0; i < height; i++) {
+            data[i * width + j] = col[i];
+        }
+    }
+    free(col);
+    return 0;
+}
+
+int FFT2D_Radix8_DIT(complexFloat *data, int height, int width) {
+    // Perform FFT on each row
+    complexFloat *row = malloc(width * sizeof(complexFloat));
+    if (!row) {
+        fprintf(stderr, "Memory allocation error.\n");
+        exit(1);
+    }
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            row[j] = data[i * width + j];
+        }
+        fft_radix8_DIT(row, row, false, 8, (int)log2(width)/3, width, 0);
+        for (int j = 0; j < width; j++) {
+            data[i * width + j] = row[j];
+        }
+    }
+    free(row);
+
+    // Perform FFT on each column
+    complexFloat *col = malloc(height * sizeof(complexFloat));
+    if (!col) {
+        fprintf(stderr, "Memory allocation error.\n");
+        exit(1);
+    }
+    for (int j = 0; j < width; j++) {
+        for (int i = 0; i < height; i++) {
+            col[i] = data[i * width + j];
+        }
+        fft_radix8_DIT(col, col, false, 8, (int)log2(height)/3, height, 0);
+        for (int i = 0; i < height; i++) {
+            data[i * width + j] = col[i];
+        }
+    }
+    free(col);
+    return 0;
+}
+
+int FFT2D_Radix8_DIF(complexFloat *data, int height, int width) {
+    // Perform FFT on each row
+    complexFloat *row = malloc(width * sizeof(complexFloat));
+    if (!row) {
+        fprintf(stderr, "Memory allocation error.\n");
+        exit(1);
+    }
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            row[j] = data[i * width + j];
+        }
+        fft_radix8_DIF(row, row, false, 8, (int)log2(width)/3, width, 0);
+        for (int j = 0; j < width; j++) {
+            data[i * width + j] = row[j];
+        }
+    }
+    free(row);
+    // Perform FFT on each column
+    complexFloat *col = malloc(height * sizeof(complexFloat));
+    if (!col) {
+        fprintf(stderr, "Memory allocation error.\n");
+        exit(1);
+    }
+    for (int j = 0; j < width; j++) {
+        for (int i = 0; i < height; i++) {
+            col[i] = data[i * width + j];
+        }
+        fft_radix8_DIF(col, col, false, 8, (int)log2(height)/3, height, 0);
+        for (int i = 0; i < height; i++) {
+            data[i * width + j] = col[i];
+        }
+    }
 }
 
 

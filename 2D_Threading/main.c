@@ -60,7 +60,7 @@ int main(int argc, char *argv[]) {
     printf("fftLength = %d\n", fftLength);
     printf("fftType = %d\n", fftType);
 
-    FILE *fpsignal = fopen("cossignal.txt","r");
+    FILE *fpsignal = fopen("fft_input.txt","r");
     FILE *fpfftInput = fopen("1fftInput.txt","w");
     FILE *fpspectrum = fopen("2spectrum.txt","w");
     FILE *fpifftOutput = fopen("3ifftOutput.txt","w");
@@ -718,49 +718,45 @@ int readMatrix(const char *filename, complexFloat **data, int *height, int *widt
 
 int FFT2D_Radix2_DIT(complexFloat *data, int height, int width) {
     int i, j;
-    // Perform FFT on each row
-            // Each thread allocates its own temporary row buffer
-        #pragma omp parallel default(none) shared(data,height,width,i,j,stderr)
-        {
-            complexFloat *row = malloc(width * sizeof(complexFloat));
-            if (!row) {
-                fprintf(stderr, "Memory allocation error in row.\n");
-                exit(1);
-            }
-            #pragma omp for
-            for (int i = 0; i < height; i++) {
-                for (int j = 0; j < width; j++) {
-                    row[j] = data[i * width + j];
-                }
-                fft_radix2_DIT(row, row, false, 2, (int)log2(width), width, 0);
-                for (int j = 0; j < width; j++) {
-                    data[i * width + j] = row[j];
-                }
-            }
-            free(row);
+
+    // Row-wise FFT
+    #pragma omp parallel for private(j)
+    for (i = 0; i < height; i++) {
+        complexFloat *row = malloc(width * sizeof(complexFloat));
+        if (!row) {
+            fprintf(stderr, "Memory allocation error in row.\n");
+            exit(1);
         }
-        
-        #pragma omp parallel default(none) shared(data,height,width,i,j,stderr)
-        {
-            complexFloat *col = malloc(height * sizeof(complexFloat));
-            if (!col) {
-                fprintf(stderr, "Memory allocation error in column.\n");
-                exit(1);
-            }
-            #pragma omp for
-            for (int j = 0; j < width; j++) {
-                for (int i = 0; i < height; i++) {
-                    col[i] = data[i * width + j];
-                }
-                fft_radix2_DIT(col, col, false, 2, (int)log2(height), height, 0);
-                for (int i = 0; i < height; i++) {
-                    data[i * width + j] = col[i];
-                }
-            }
-            free(col);
+        for (j = 0; j < width; j++) {
+            row[j] = data[i * width + j];
         }
-        return 0;
+        fft_radix2_DIT(row, row, false, 2, (int)log2(width), width, 0);
+        for (j = 0; j < width; j++) {
+            data[i * width + j] = row[j];
+        }
+        free(row);
     }
+
+    // Column-wise FFT
+    #pragma omp parallel for private(i)
+    for (j = 0; j < width; j++) {
+        complexFloat *col = malloc(height * sizeof(complexFloat));
+        if (!col) {
+            fprintf(stderr, "Memory allocation error in col.\n");
+            exit(1);
+        }
+        for (i = 0; i < height; i++) {
+            col[i] = data[i * width + j];
+        }
+        fft_radix2_DIT(col, col, false, 2, (int)log2(height), height, 0);
+        for (i = 0; i < height; i++) {
+            data[i * width + j] = col[i];
+        }
+        free(col);
+    }
+
+    return 0;
+}
 
 int FFT2D_Radix2_DIF(complexFloat *data, int height, int width) {
     // Perform FFT on each row

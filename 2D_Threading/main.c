@@ -1,4 +1,8 @@
-/* perf stat -e cache-references,cache-misses ./fft_main 2 12 1 */
+/* perf stat -e cache-references,cache-misses 
+./fft_main 2 12 1 
+gcc -fopenmp -O1 -o fft_main main.c -lm
+OMP_NUM_THREADS=8 ./fft_main fft_input.txt 2 12 1
+*/
 
 #include <time.h>
 #include <stdio.h>
@@ -39,10 +43,73 @@ static complexFloat complexMul( complexFloat A, complexFloat B);
 static u32 reverseBit( u32 n, int fftRadix, int fftLength);
 static complexFloat getWeight( int iButterfly, int indexWeight, int fftLength);
 
+/* -=-=-=-=- Time measurement by clock_gettime() -=-=-=-=- */
+/*
+  As described in the clock_gettime manpage (type "man clock_gettime" at the
+  shell prompt), a "timespec" is a structure that looks like this:
+ 
+        struct timespec {
+          time_t   tv_sec;   // seconds
+          long     tv_nsec;  // and nanoseconds
+        };
+ */
+
+double interval(struct timespec start, struct timespec end)
+{
+  struct timespec temp;
+  temp.tv_sec = end.tv_sec - start.tv_sec;
+  temp.tv_nsec = end.tv_nsec - start.tv_nsec;
+  if (temp.tv_nsec < 0) {
+    temp.tv_sec = temp.tv_sec - 1;
+    temp.tv_nsec = temp.tv_nsec + 1000000000;
+  }
+  return (((double)temp.tv_sec) + ((double)temp.tv_nsec)*1.0e-9);
+}
+/*
+     This method does not require adjusting a #define constant
+
+  How to use this method:
+
+      struct timespec time_start, time_stop;
+      clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_start);
+      // DO SOMETHING THAT TAKES TIME
+      clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_stop);
+      measurement = interval(time_start, time_stop);
+
+ */
+
+
+/* -=-=-=-=- End of time measurement declarations =-=-=-=- */
+
+/* This routine "wastes" a little time to make sure the machine gets
+   out of power-saving mode (800 MHz) and switches to normal speed. */
+double wakeup_delay()
+{
+  double meas = 0; int i, j;
+  struct timespec time_start, time_stop;
+  double quasi_random = 0;
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_start);
+  j = 100;
+  while (meas < 1.0) {
+    for (i=1; i<j; i++) {
+      /* This iterative calculation uses a chaotic map function, specifically
+         the complex quadratic map (as in Julia and Mandelbrot sets), which is
+         unpredictable enough to prevent compiler optimisation. */
+      quasi_random = quasi_random*quasi_random - 1.923432;
+    }
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_stop);
+    meas = interval(time_start, time_stop);
+    j *= 2; /* Twice as much delay next time, until we've taken 1 second */
+  }
+  return quasi_random;
+}
 
 
 int main(int argc, char *argv[]) {
     int i;
+    struct timespec time_start, time_stop;
+    //double time_stamp[OPTIONS][NUM_TESTS];
+    double final_answer;
     int ognt = 0;
     int THREADS = 8; // Default number of threads
     char *env_ONT = getenv("OMP_NUM_THREADS");
@@ -68,7 +135,7 @@ int main(int argc, char *argv[]) {
     }
 
     omp_set_num_threads(ognt);
-
+    final_answer = wakeup_delay();
     /* Once again ask OpenMP how many threads it is going to use */
     #pragma omp parallel for
     for(i=0; i<1; i++) {
@@ -125,17 +192,17 @@ int main(int argc, char *argv[]) {
     switch (fftRadix){
         case 2:
             if(fftType == DIT){
-                clock_t start_fft = clock();
+                clock_gettime(CLOCK_REALTIME, &time_start);
                 fft_radix2_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 0);
-                clock_t end_fft = clock();
-                double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+                clock_gettime(CLOCK_REALTIME, &time_stop);
+                double time_fft = interval(time_start, time_stop);
                 printf("FFT time-Radix2 DIT: %f seconds\n", time_fft);
 
                 // 2DFFT Radix2 DIT
-                clock_t start_2fft = clock();
+                clock_gettime(CLOCK_REALTIME, &time_start);
                 FFT2D_Radix2_DIT(data, height, width);
-                clock_t end_2fft = clock();
-                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
+                clock_gettime(CLOCK_REALTIME, &time_stop);
+                double time_2fft = interval(time_start, time_stop);
                 FILE *outputFile = fopen("2DFFT_Radix2_output_c_DIT.txt", "w");
                 if (outputFile == NULL) {
                     printf("Error: Could not open file for writing.\n");
@@ -149,17 +216,17 @@ int main(int argc, char *argv[]) {
                 printf("2DFFT time-Radix2 DIT: %f seconds\n", time_2fft);
 
             }else{
-                clock_t start_fft = clock();
-                fft_radix2_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 1);
-                clock_t end_fft = clock();
-                double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+                clock_gettime(CLOCK_REALTIME, &time_start);
+                fft_radix2_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 0);
+                clock_gettime(CLOCK_REALTIME, &time_stop);
+                double time_fft = interval(time_start, time_stop);
                 printf("FFT time-Radix2 DIF: %f seconds\n", time_fft);
 
-                // 2DFFT Radix2 DIF
-                clock_t start_2fft = clock();
+                // 2DFFT Radix2 DIT
+                clock_gettime(CLOCK_REALTIME, &time_start);
                 FFT2D_Radix2_DIF(data, height, width);
-                clock_t end_2fft = clock();
-                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
+                clock_gettime(CLOCK_REALTIME, &time_stop);
+                double time_2fft = interval(time_start, time_stop);
                 FILE *outputFile = fopen("2DFFT_Radix2_output_c_DIF.txt", "w");
                 if (outputFile == NULL) {
                     printf("Error: Could not open file for writing.\n");
@@ -170,21 +237,22 @@ int main(int argc, char *argv[]) {
                 }
                 fclose(outputFile);
                 free(data);
-                printf("2DFFT time-Radix2 DIT: %f seconds\n", time_2fft);
+                printf("2DFFT time-Radix2 DIF: %f seconds\n", time_2fft);
             }
             break;
         case 4:
             if(fftType == DIT){
-                clock_t start_fft = clock();
+                clock_gettime(CLOCK_REALTIME, &time_start);
                 fft_radix4_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 0);
-                clock_t end_fft = clock();
-                double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+                clock_gettime(CLOCK_REALTIME, &time_stop);
+                double time_fft = interval(time_start, time_stop);
                 printf("FFT time-Radix4 DIT: %f seconds\n", time_fft);
-                // 2DFFT Radix4 DIT
-                clock_t start_2fft = clock();
+
+                // 2DFFT Radix2 DIT
+                clock_gettime(CLOCK_REALTIME, &time_start);
                 FFT2D_Radix4_DIT(data, height, width);
-                clock_t end_2fft = clock();
-                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
+                clock_gettime(CLOCK_REALTIME, &time_stop);
+                double time_2fft = interval(time_start, time_stop);
                 FILE *outputFile = fopen("2DFFT_Radix4_output_c_DIT.txt", "w");
                 if (outputFile == NULL) {
                     printf("Error: Could not open file for writing.\n");
@@ -197,16 +265,17 @@ int main(int argc, char *argv[]) {
                 free(data);
                 printf("2DFFT time-Radix4 DIT: %f seconds\n", time_2fft);
             }else{
-                clock_t start_fft = clock();
-                fft_radix4_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 1);
-                clock_t end_fft = clock();
-                double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+                clock_gettime(CLOCK_REALTIME, &time_start);
+                fft_radix4_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 0);
+                clock_gettime(CLOCK_REALTIME, &time_stop);
+                double time_fft = interval(time_start, time_stop);
                 printf("FFT time-Radix4 DIF: %f seconds\n", time_fft);
-                // 2DFFT Radix4 DIF
-                clock_t start_2fft = clock();
+
+                // 2DFFT Radix2 DIT
+                clock_gettime(CLOCK_REALTIME, &time_start);
                 FFT2D_Radix4_DIF(data, height, width);
-                clock_t end_2fft = clock();
-                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
+                clock_gettime(CLOCK_REALTIME, &time_stop);
+                double time_2fft = interval(time_start, time_stop);
                 FILE *outputFile = fopen("2DFFT_Radix4_output_c_DIF.txt", "w");
                 if (outputFile == NULL) {
                     printf("Error: Could not open file for writing.\n");
@@ -223,16 +292,17 @@ int main(int argc, char *argv[]) {
             break;
         case 8:
             if(fftType == DIT){
-                clock_t start_fft = clock();
+                clock_gettime(CLOCK_REALTIME, &time_start);
                 fft_radix8_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 0);
-                clock_t end_fft = clock();
-                double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+                clock_gettime(CLOCK_REALTIME, &time_stop);
+                double time_fft = interval(time_start, time_stop);
                 printf("FFT time-Radix8 DIT: %f seconds\n", time_fft);
-                // 2DFFT Radix8 DIT
-                clock_t start_2fft = clock();
+
+                // 2DFFT Radix2 DIT
+                clock_gettime(CLOCK_REALTIME, &time_start);
                 FFT2D_Radix8_DIT(data, height, width);
-                clock_t end_2fft = clock();
-                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
+                clock_gettime(CLOCK_REALTIME, &time_stop);
+                double time_2fft = interval(time_start, time_stop);
                 FILE *outputFile = fopen("2DFFT_Radix8_output_c_DIT.txt", "w");
                 if (outputFile == NULL) {
                     printf("Error: Could not open file for writing.\n");
@@ -245,17 +315,17 @@ int main(int argc, char *argv[]) {
                 free(data);
                 printf("2DFFT time-Radix8 DIT: %f seconds\n", time_2fft);
             }else{
-                clock_t start_fft = clock();
-                fft_radix8_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 1);
-                clock_t end_fft = clock();
-                double time_fft = (double)(end_fft - start_fft) / CLOCKS_PER_SEC;
+                clock_gettime(CLOCK_REALTIME, &time_start);
+                fft_radix8_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, 0);
+                clock_gettime(CLOCK_REALTIME, &time_stop);
+                double time_fft = interval(time_start, time_stop);
                 printf("FFT time-Radix8 DIF: %f seconds\n", time_fft);
 
-                // 2DFFT Radix8 DIF
-                clock_t start_2fft = clock();
+                // 2DFFT Radix2 DIT
+                clock_gettime(CLOCK_REALTIME, &time_start);
                 FFT2D_Radix8_DIF(data, height, width);
-                clock_t end_2fft = clock();
-                double time_2fft = (double)(end_2fft - start_2fft) / CLOCKS_PER_SEC;
+                clock_gettime(CLOCK_REALTIME, &time_stop);
+                double time_2fft = interval(time_start, time_stop);
                 FILE *outputFile = fopen("2DFFT_Radix8_output_c_DIF.txt", "w");
                 if (outputFile == NULL) {
                     printf("Error: Could not open file for writing.\n");
@@ -778,55 +848,46 @@ int FFT2D_Radix2_DIT(complexFloat *data, int height, int width) {
             data[i * width + j] = col[i];
         }
     }
-
     return 0;
 }
 
 int FFT2D_Radix2_DIF(complexFloat *data, int height, int width) {
-    // Perform FFT on each row
-    complexFloat *row = malloc(width * sizeof(complexFloat));
-    if (!row) {
-        fprintf(stderr, "Memory allocation error.\n");
-        exit(1);
-    }
+     // ----------- Row-wise FFT ------------
+    #pragma omp parallel for
     for (int i = 0; i < height; i++) {
+        complexFloat *row = alloca(width * sizeof(complexFloat));
+
         for (int j = 0; j < width; j++) {
             row[j] = data[i * width + j];
         }
-        fft_radix2_DIF(row, row, false, 2, (int)log2(width), width, 0);
+        fft_radix2_DIF(row, row, false, 2, (int)log2(width), width, 1);
         for (int j = 0; j < width; j++) {
             data[i * width + j] = row[j];
         }
     }
-    free(row);
 
-    // Perform FFT on each column
-    complexFloat *col = malloc(height * sizeof(complexFloat));
-    if (!col) {
-        fprintf(stderr, "Memory allocation error.\n");
-        exit(1);
-    }
+    // ----------- Column-wise FFT ------------
+    #pragma omp parallel for
     for (int j = 0; j < width; j++) {
+        complexFloat *col = alloca(height * sizeof(complexFloat));
+
         for (int i = 0; i < height; i++) {
             col[i] = data[i * width + j];
         }
-        fft_radix2_DIF(col, col, false, 2, (int)log2(height), height, 0);
+        fft_radix2_DIF(col, col, false, 2, (int)log2(height), height, 1);
         for (int i = 0; i < height; i++) {
             data[i * width + j] = col[i];
         }
     }
-    free(col);
     return 0;
 }
 
 int FFT2D_Radix4_DIT(complexFloat *data, int height, int width){
-    // Perform FFT on each row
-    complexFloat *row = malloc(width * sizeof(complexFloat));
-    if (!row) {
-        fprintf(stderr, "Memory allocation error.\n");
-        exit(1);
-    }
+     // ----------- Row-wise FFT ------------
+    #pragma omp parallel for
     for (int i = 0; i < height; i++) {
+        complexFloat *row = alloca(width * sizeof(complexFloat));
+
         for (int j = 0; j < width; j++) {
             row[j] = data[i * width + j];
         }
@@ -835,15 +896,12 @@ int FFT2D_Radix4_DIT(complexFloat *data, int height, int width){
             data[i * width + j] = row[j];
         }
     }
-    free(row);
 
-    // Perform FFT on each column
-    complexFloat *col = malloc(height * sizeof(complexFloat));
-    if (!col) {
-        fprintf(stderr, "Memory allocation error.\n");
-        exit(1);
-    }
+    // ----------- Column-wise FFT ------------
+    #pragma omp parallel for
     for (int j = 0; j < width; j++) {
+        complexFloat *col = alloca(height * sizeof(complexFloat));
+
         for (int i = 0; i < height; i++) {
             col[i] = data[i * width + j];
         }
@@ -852,55 +910,46 @@ int FFT2D_Radix4_DIT(complexFloat *data, int height, int width){
             data[i * width + j] = col[i];
         }
     }
-    free(col);
     return 0;
 } 
 
 int FFT2D_Radix4_DIF(complexFloat *data, int height, int width){
-    // Perform FFT on each row
-    complexFloat *row = malloc(width * sizeof(complexFloat));
-    if (!row) {
-        fprintf(stderr, "Memory allocation error.\n");
-        exit(1);
-    }
+      // ----------- Row-wise FFT ------------
+    #pragma omp parallel for
     for (int i = 0; i < height; i++) {
+        complexFloat *row = alloca(width * sizeof(complexFloat));
+
         for (int j = 0; j < width; j++) {
             row[j] = data[i * width + j];
         }
-        fft_radix4_DIF(row, row, false, 4, (int)log2(width)/2, width, 0);
+        fft_radix4_DIF(row, row, false, 4, (int)log2(width)/2, width, 1);
         for (int j = 0; j < width; j++) {
             data[i * width + j] = row[j];
         }
     }
-    free(row);
 
-    // Perform FFT on each column
-    complexFloat *col = malloc(height * sizeof(complexFloat));
-    if (!col) {
-        fprintf(stderr, "Memory allocation error.\n");
-        exit(1);
-    }
+    // ----------- Column-wise FFT ------------
+    #pragma omp parallel for
     for (int j = 0; j < width; j++) {
+        complexFloat *col = alloca(height * sizeof(complexFloat));
+
         for (int i = 0; i < height; i++) {
             col[i] = data[i * width + j];
         }
-        fft_radix4_DIF(col, col, false, 4, (int)log2(height)/2, height, 0);
+        fft_radix4_DIF(col, col, false, 4, (int)log2(height)/2, height, 1);
         for (int i = 0; i < height; i++) {
             data[i * width + j] = col[i];
         }
     }
-    free(col);
     return 0;
 }
 
 int FFT2D_Radix8_DIT(complexFloat *data, int height, int width) {
-    // Perform FFT on each row
-    complexFloat *row = malloc(width * sizeof(complexFloat));
-    if (!row) {
-        fprintf(stderr, "Memory allocation error.\n");
-        exit(1);
-    }
+       // ----------- Row-wise FFT ------------
+    #pragma omp parallel for
     for (int i = 0; i < height; i++) {
+        complexFloat *row = alloca(width * sizeof(complexFloat));
+
         for (int j = 0; j < width; j++) {
             row[j] = data[i * width + j];
         }
@@ -909,15 +958,12 @@ int FFT2D_Radix8_DIT(complexFloat *data, int height, int width) {
             data[i * width + j] = row[j];
         }
     }
-    free(row);
 
-    // Perform FFT on each column
-    complexFloat *col = malloc(height * sizeof(complexFloat));
-    if (!col) {
-        fprintf(stderr, "Memory allocation error.\n");
-        exit(1);
-    }
+    // ----------- Column-wise FFT ------------
+    #pragma omp parallel for
     for (int j = 0; j < width; j++) {
+        complexFloat *col = alloca(height * sizeof(complexFloat));
+
         for (int i = 0; i < height; i++) {
             col[i] = data[i * width + j];
         }
@@ -926,42 +972,38 @@ int FFT2D_Radix8_DIT(complexFloat *data, int height, int width) {
             data[i * width + j] = col[i];
         }
     }
-    free(col);
     return 0;
 }
 
 int FFT2D_Radix8_DIF(complexFloat *data, int height, int width) {
-    // Perform FFT on each row
-    complexFloat *row = malloc(width * sizeof(complexFloat));
-    if (!row) {
-        fprintf(stderr, "Memory allocation error.\n");
-        exit(1);
-    }
+      // ----------- Row-wise FFT ------------
+    #pragma omp parallel for
     for (int i = 0; i < height; i++) {
+        complexFloat *row = alloca(width * sizeof(complexFloat));
+
         for (int j = 0; j < width; j++) {
             row[j] = data[i * width + j];
         }
-        fft_radix8_DIF(row, row, false, 8, (int)log2(width)/3, width, 0);
+        fft_radix8_DIF(row, row, false, 8, (int)log2(width)/3, width, 1);
         for (int j = 0; j < width; j++) {
             data[i * width + j] = row[j];
         }
     }
-    free(row);
-    // Perform FFT on each column
-    complexFloat *col = malloc(height * sizeof(complexFloat));
-    if (!col) {
-        fprintf(stderr, "Memory allocation error.\n");
-        exit(1);
-    }
+
+    // ----------- Column-wise FFT ------------
+    #pragma omp parallel for
     for (int j = 0; j < width; j++) {
+        complexFloat *col = alloca(height * sizeof(complexFloat));
+
         for (int i = 0; i < height; i++) {
             col[i] = data[i * width + j];
         }
-        fft_radix8_DIF(col, col, false, 8, (int)log2(height)/3, height, 0);
+        fft_radix8_DIF(col, col, false, 8, (int)log2(height)/3, height, 1);
         for (int i = 0; i < height; i++) {
             data[i * width + j] = col[i];
         }
     }
+    return 0;
 }
 
 

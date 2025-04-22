@@ -11,6 +11,7 @@ OMP_NUM_THREADS=8 ./fft_main fft_input.txt 2 12 1
 #include <stdbool.h>
 #include <string.h>
 #include <omp.h>
+#include <pthread.h>
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -18,11 +19,22 @@ typedef char u8;
 #define DIT 0 
 #define DIF 1 
 #define ARRAY_SIZE 4096*2
+#define THREAD_COUNT 8
+
 typedef struct _complexFloat{
     float re;
     float im;
 }complexFloat;
 
+typedef struct {
+    int start;
+    int end;
+    int groupSize;
+    int groupNum;
+    int fftRadix;
+    int fftLength;
+    complexFloat *butterfly;
+} FFTStageArgs;
 
 int fft_radix2_DIF( complexFloat *input, complexFloat *output, bool IFFT, int fftRadix, int fftStage, int fftLength, int fftType);
 int fft_radix2_DIT(complexFloat *input,  complexFloat *output, bool IFFT, int fftRadix, int fftStage, int fftLength, int fftType);
@@ -353,12 +365,30 @@ int main(int argc, char *argv[]) {
 }
 
 
-// Radix-2 FFT DIF
-int fft_radix2_DIF( complexFloat *input, complexFloat *output, bool IFFT, int fftRadix, int fftStage, int fftLength, int fftType ){
+// Worker for the inner loops of fft_radix2_DIF
+void *fft_radix2_dif_worker(void *args) {
+    FFTStageArgs *a = (FFTStageArgs *) args;
+    for (int t = a->start; t < a->end; t++) {
+        int j = t / a->groupSize;
+        int k = t % a->groupSize;
+        int indexButterfly[2];
+        for (int m = 0; m < 2; m++){
+            indexButterfly[m] = j * a->groupSize * a->fftRadix + k + m * a->groupSize;
+        }
+        int indexWeight = k * a->groupNum;
+        complexFloat tmp0 = complexAdd(a->butterfly[indexButterfly[0]], a->butterfly[indexButterfly[1]]);
+        complexFloat tmp1 = complexSub(a->butterfly[indexButterfly[0]], a->butterfly[indexButterfly[1]]);
+        a->butterfly[indexButterfly[0]] = complexMul(tmp0, getWeight(0, indexWeight, a->fftLength));
+        a->butterfly[indexButterfly[1]] = complexMul(tmp1, getWeight(1, indexWeight, a->fftLength));
+    }
+    return NULL;
+}
+
+int fft_radix2_DIF( complexFloat *input, complexFloat *output, bool IFFT, 
+                     int fftRadix, int fftStage, int fftLength, int fftType ){
     complexFloat *butterfly = (complexFloat*) malloc(sizeof(complexFloat) * fftLength);
     for(u32 i = 0; i < fftLength; i++){
-        u32 iOrder;
-        iOrder =  i;
+        u32 iOrder = i;
         if(IFFT){
             butterfly[iOrder].re = input[i].re;
             butterfly[iOrder].im = -input[i].im;
@@ -366,40 +396,42 @@ int fft_radix2_DIF( complexFloat *input, complexFloat *output, bool IFFT, int ff
             butterfly[iOrder] = input[i];
         }
     }  
-    complexFloat tmpButterfly[(int)(log(fftRadix)/log(2))][fftRadix];
-    int indexButterfly[fftRadix];
-    int indexWeight;
-    for(int i = 0; i < fftStage; i++){
-        int groupNum, groupSize;
-        groupNum =  pow(fftRadix, i);
-        groupSize =  pow(fftRadix, fftStage-1 - i);
-        for(int j = 0; j < groupNum; j++){
-            for(int k = 0; k < groupSize; k++){
-                for(int m = 0; m < fftRadix; m++){
-                    indexButterfly[m] = j * groupSize * fftRadix + k + m * groupSize;
-                }
-                indexWeight = k * groupNum;
-                tmpButterfly[0][0] = complexAdd(butterfly[indexButterfly[0]], butterfly[indexButterfly[1]]);
-                tmpButterfly[0][1] = complexSub(butterfly[indexButterfly[0]], butterfly[indexButterfly[1]]);
-                butterfly[indexButterfly[0]] = complexMul(tmpButterfly[0][0], getWeight(0,indexWeight, fftLength));
-                butterfly[indexButterfly[1]] = complexMul(tmpButterfly[0][1], getWeight(1,indexWeight, fftLength));
-                    
-            }
+
+    // For each stage, use pthreads to parallelize the inner loops.
+    for(int stage = 0; stage < fftStage; stage++){
+        int groupNum = pow(fftRadix, stage);
+        int groupSize = pow(fftRadix, fftStage - 1 - stage);
+        int total = groupNum * groupSize;
+        int chunk = (total + THREAD_COUNT - 1) / THREAD_COUNT;
+        pthread_t threads[THREAD_COUNT];
+        FFTStageArgs args[THREAD_COUNT];
+        for (int tid = 0; tid < THREAD_COUNT; tid++){
+            args[tid].start = tid * chunk;
+            args[tid].end = (tid + 1) * chunk;
+            if (args[tid].end > total)
+                args[tid].end = total;
+            args[tid].groupSize = groupSize;
+            args[tid].groupNum = groupNum;
+            args[tid].fftRadix = fftRadix;
+            args[tid].fftLength = fftLength;
+            args[tid].butterfly = butterfly;
+            pthread_create(&threads[tid], NULL, fft_radix2_dif_worker, &args[tid]);
+        }
+        for (int tid = 0; tid < THREAD_COUNT; tid++){
+            pthread_join(threads[tid], NULL);
         }
     }
 
     for(u32 i = 0; i < fftLength; i++){
-        u32 iOrder;
-        iOrder = reverseBit(i,fftRadix,fftLength) ;
+        u32 iOrder = reverseBit(i, fftRadix, fftLength);
         if(IFFT){
             output[iOrder].re = butterfly[i].re / fftLength;
-    	    output[iOrder].im = -butterfly[i].im / fftLength;
+            output[iOrder].im = -butterfly[i].im / fftLength;
         }else{
             output[iOrder] = butterfly[i];
         }
     }
     free(butterfly);
-    butterfly = NULL;
     return 0;
 }
 

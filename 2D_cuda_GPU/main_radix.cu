@@ -24,8 +24,9 @@
  #include <string.h>
  #include <cuda_runtime.h>
  
- #define BLOCK_SIZE 8
+ #define BLOCK_SIZE 32
  #define PI 3.14159265358979323846
+ #define EPSILON 0.5
  
  typedef struct _complexFloat {
     float  re;
@@ -170,15 +171,17 @@
      }
  }
  
- // Baseline DFT kernel
+ // Baseline DFT kernel for sanity check
  __global__ void matrix1DFFTKernel(complexFloat *input, complexFloat *output, complexFloat *temp, int row, int col, bool row_or_col) {
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     int i = blockIdx.y * blockDim.y + threadIdx.y;
-
+    
+    // Check bounds to prevent accessing memory out of bounds
     if (i < row && j < col) {
         if (row_or_col == 0) { // rows
             complexFloat sum = {0, 0};
             float theta = 2 * M_PI / col * j;
+            
             for (int jj = 0; jj < col; jj++) {
                 complexFloat twiddle = {cos(theta * jj), sin(-theta * jj)};
                 sum.re += input[i * col + jj].re * twiddle.re - input[i * col + jj].im * twiddle.im;
@@ -188,6 +191,7 @@
         } else { // columns
             complexFloat sum = {0, 0};
             float theta = 2 * M_PI / row * i;
+            
             for (int ii = 0; ii < row; ii++) {
                 complexFloat twiddle = {cos(theta * ii), sin(-theta * ii)};
                 sum.re += temp[ii * col + j].re * twiddle.re - temp[ii * col + j].im * twiddle.im;
@@ -196,7 +200,6 @@
             output[i * col + j] = sum;
         }
     }
-
 }
  
  int main(int argc, char *argv[]) {
@@ -247,20 +250,20 @@
      cudaEventRecord(start, 0);
      
      // First perform row-wise FFT
-     dim3 rowGridDim((height + 255) / 256, 1, 1);
-     dim3 rowBlockDim(256, 1, 1);
+     dim3 rowGridDim((height + BLOCK_SIZE-1) / BLOCK_SIZE, 1, 1);
+     dim3 rowBlockDim(BLOCK_SIZE, 1, 1);
      rowFFTKernel<<<rowGridDim, rowBlockDim>>>(d_data, width, height, 1);
      CUDA_SAFE_CALL(cudaDeviceSynchronize());
      
      // Transpose the matrix
-     dim3 transposeBlockDim(16, 16, 1);
+     dim3 transposeBlockDim(16,16, 1);
      dim3 transposeGridDim((width + 15) / 16, (height + 15) / 16, 1);
      transposeKernel<<<transposeGridDim, transposeBlockDim>>>(d_data, d_temp, width, height);
      CUDA_SAFE_CALL(cudaDeviceSynchronize());
      
      // Perform FFT on the transposed matrix (column-wise FFT)
-     dim3 colGridDim((width + 255) / 256, 1, 1);
-     dim3 colBlockDim(256, 1, 1);
+     dim3 colGridDim((width + BLOCK_SIZE-1) / BLOCK_SIZE, 1, 1);
+     dim3 colBlockDim(BLOCK_SIZE, 1, 1);
      rowFFTKernel<<<colGridDim, colBlockDim>>>(d_temp, height, width, 1);
      CUDA_SAFE_CALL(cudaDeviceSynchronize());
      
@@ -283,8 +286,8 @@
      cudaEventRecord(start, 0);
      
      // Row-wise baseline FFT
-     dim3 baselineBlockDim(BLOCK_SIZE, BLOCK_SIZE);
-     dim3 baselineGridDim((width + BLOCK_SIZE - 1) / BLOCK_SIZE, (height + BLOCK_SIZE - 1) / BLOCK_SIZE);
+     dim3 baselineBlockDim(32, 32);
+     dim3 baselineGridDim((width + 31) / 32, (height + 31) / 32);
      matrix1DFFTKernel<<<baselineGridDim, baselineBlockDim>>>(d_data, nullptr, d_temp, height, width, false);
      CUDA_SAFE_CALL(cudaDeviceSynchronize());
      
@@ -315,7 +318,7 @@
      }
  
      // Write output to file
-     FILE *outputFile = fopen("2DFFT_GPU_output.txt", "w");
+     FILE *outputFile = fopen("cuda_output.txt", "w");
      if (outputFile == NULL) {
          printf("Error: Could not open file for writing.\n");
          return 1;
@@ -426,12 +429,11 @@
  }
  
  bool compareResults(complexFloat *res1, complexFloat *res2, int size) {
-     const float epsilon = 0.75;
      bool match = true;
      int mismatch_count = 0;
      
      for (int i = 0; i < size; i++) {
-         if (fabs(res1[i].re - res2[i].re) > epsilon || fabs(res1[i].im - res2[i].im) > epsilon) {
+         if (fabs(res1[i].re - res2[i].re) > EPSILON || fabs(res1[i].im - res2[i].im) > EPSILON) {
              match = false;
              mismatch_count++;
              if (mismatch_count <= 5) {

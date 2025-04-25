@@ -169,10 +169,23 @@
  
  int main(int argc, char *argv[]) {
      if (argc < 2) {
-         fprintf(stderr, "Usage: %s <input_file>\n", argv[0]);
+         fprintf(stderr, "Usage: %s <fftlength>\n", argv[0]);
          return 1;
      }
- 
+    int fftLength = atoi(argv[1]);
+    int i, j, k;
+     int N = (int)pow(2, NUM_TESTS);
+     float *signal = (float*) malloc(sizeof(float) * N*N);
+     int frequencies[] = {4, 8, 18, 33, 152}; 
+     int num_frequencies = sizeof(frequencies) / sizeof(frequencies[0]);
+     for (int k = 0; k < NUM_TESTS; k++) {
+        for (int i = 0; i < N; i++) {
+            signal[i * N + k] = 0.0;
+            for (int j = 0; j < num_frequencies; j++) {
+                signal[i * N + k] += cos(2 * M_PI * frequencies[j] * i / N);
+            }
+        }
+     }
      // GPU Timing variables
      cudaEvent_t start, stop;
      float elapsedTime;
@@ -187,17 +200,13 @@
  
      // Read the matrix input data
      complexFloat *data;
-     int height, width;
-     if (!readMatrix(argv[1], &data, &height, &width)) {
-         return 1;
+     for (k = 0; k < NUM_TESTS; k++) {
+        for (i = 0; i < fftLength; i++) {
+            data[i*fftLength + K].re = signal[i*fftLength + K];
+            data[i*fftLength + K].im = 0;
+        }
      }
  
-     // Ensure the input dimensions are powers of 2
-     if ((height & (height - 1)) != 0 || (width & (width - 1)) != 0) {
-         fprintf(stderr, "Error: Matrix dimensions must be powers of 2.\n");
-         free(data);
-         return 1;
-     }
 
      /*   // Uncomment this section to generate a test signal with larger size
     int N = (int)pow(2, NUM_TESTS);

@@ -181,6 +181,50 @@ __global__ void columnWiseFFTKernelShared(complexFloat *input, complexFloat *out
 }
 
 
+ // Kernel for radix-2 FFT with bit reversal included
+ __global__ void radix2FFTKernel(complexFloat *data, int n, int direction) {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tid >= n) return;
+    
+    __shared__ complexFloat shared_data[4096]; // Make sure this is large enough
+    
+    // Each thread loads one element to shared memory
+    if (tid < n) {
+        shared_data[threadIdx.x] = data[tid];
+    }
+    __syncthreads();
+    
+    // Perform bit reversal (only one thread per block should do this)
+    if (threadIdx.x == 0) {
+        bitReversal(shared_data, blockDim.x);
+    }
+    __syncthreads();
+    
+    // Butterfly computation
+    for (int s = 1; s < blockDim.x; s *= 2) {
+        int position = threadIdx.x;
+        int butterfly_size = 2 * s;
+        
+        if ((position % butterfly_size) < s) {
+            int partner = position + s;
+            if (partner < blockDim.x) {
+                float angle = -direction * 2.0f * PI * (position % s) / butterfly_size;
+                complexFloat twiddle = {cosf(angle), sinf(angle)};
+                
+                complexFloat temp = complexMul(shared_data[partner], twiddle);
+                shared_data[partner] = complexSub(shared_data[position], temp);
+                shared_data[position] = complexAdd(shared_data[position], temp);
+            }
+        }
+        __syncthreads();
+    }
+    
+    // Write back
+    if (tid < n) {
+        data[tid] = shared_data[threadIdx.x];
+    }
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <input_file>\n", argv[0]);

@@ -24,9 +24,17 @@
  #include <string.h>
  #include <cuda_runtime.h>
  
- #define BLOCK_SIZE 32
- #define PI 3.14159265358979323846
- #define EPSILON 0.5
+#ifndef BLOCK_SIZE
+    #define BLOCK_SIZE 32
+#endif
+
+#ifndef EPSILON
+    #define EPSILON 0.5
+#endif
+
+#define PI 3.14159265358979323846
+
+#define NUM_TESTS 24
  
  typedef struct _complexFloat {
     float  re;
@@ -88,49 +96,6 @@
      return result;
  }
  
- // Kernel for radix-2 FFT with bit reversal included
- __global__ void radix2FFTKernel(complexFloat *data, int n, int direction) {
-     int tid = threadIdx.x + blockIdx.x * blockDim.x;
-     if (tid >= n) return;
-     
-     __shared__ complexFloat shared_data[4096]; // Make sure this is large enough
-     
-     // Each thread loads one element to shared memory
-     if (tid < n) {
-         shared_data[threadIdx.x] = data[tid];
-     }
-     __syncthreads();
-     
-     // Perform bit reversal (only one thread per block should do this)
-     if (threadIdx.x == 0) {
-         bitReversal(shared_data, blockDim.x);
-     }
-     __syncthreads();
-     
-     // Butterfly computation
-     for (int s = 1; s < blockDim.x; s *= 2) {
-         int position = threadIdx.x;
-         int butterfly_size = 2 * s;
-         
-         if ((position % butterfly_size) < s) {
-             int partner = position + s;
-             if (partner < blockDim.x) {
-                 float angle = -direction * 2.0f * PI * (position % s) / butterfly_size;
-                 complexFloat twiddle = {cosf(angle), sinf(angle)};
-                 
-                 complexFloat temp = complexMul(shared_data[partner], twiddle);
-                 shared_data[partner] = complexSub(shared_data[position], temp);
-                 shared_data[position] = complexAdd(shared_data[position], temp);
-             }
-         }
-         __syncthreads();
-     }
-     
-     // Write back
-     if (tid < n) {
-         data[tid] = shared_data[threadIdx.x];
-     }
- }
  
  // Kernel for transposing a matrix
  __global__ void transposeKernel(complexFloat *input, complexFloat *output, int width, int height) {
@@ -233,7 +198,23 @@
          free(data);
          return 1;
      }
+
+     /*   // Uncomment this section to generate a test signal with larger size
+    int N = (int)pow(2, NUM_TESTS);
+     float signal = (float) malloc(sizeof(float) * N);
+     int frequencies[] = {4, 8, 18, 33, 152}; 
+     int num_frequencies = sizeof(frequencies) / sizeof(frequencies[0]);
  
+     for (int i = 0; i < N; i++) {
+         signal[i] = 0.0;
+         for (int j = 0; j < num_frequencies; j++) {
+             signal[i] += cos(2 * PI * frequencies[j] * i / N);
+         }
+     }
+
+     
+     */
+
      // Allocate memory on the GPU
      CUDA_SAFE_CALL(cudaMalloc((void**)&d_data, sizeof(complexFloat) * height * width));
      CUDA_SAFE_CALL(cudaMalloc((void**)&d_temp, sizeof(complexFloat) * height * width));
@@ -425,6 +406,7 @@
      }
  
      fclose(file);
+     
      return 1;
  }
  

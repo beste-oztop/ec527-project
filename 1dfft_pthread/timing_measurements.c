@@ -16,9 +16,9 @@ typedef unsigned short u16;
 typedef char u8;
 #define DIT 0 
 #define DIF 1 
-#define NUM_TESTS 24
+#define NUM_TESTS 28
 #define OPTIONS 12
-#define NUM_THREADS 8
+#define NUM_THREADS 5
 
 typedef struct _complexFloat{
     float re;
@@ -137,25 +137,30 @@ int main(int argc, char *argv[]) {
     // printf("fftLength = %d\n", fftLength);
     // printf("fftType = %d\n", fftType);
 
-    FILE *fpsignal = fopen("cossignal.txt","r");
-    FILE *fpfft = fopen("fft_perf_Thread_8.csv","w");
+    FILE *fpfft = fopen("fft_perf_Thread_5.csv","w");
 
-    fprintf(fpfft, "Array_Size, Radix_2_DIT_Serial, Radix_2_DIF_Serial, Radix_2_DIT_Thread, Radix_2_DIF_Thread , Radix_4_DIT_Serial, Radix_4_DIF_Serial, Radix_4_DIT_Thread, Radix_4_DIF_Thread, Radix_8_DIT_Serial, Radix_8_DIF_Serial, Radix_8_DIT_Thread, Radix_8_DIF_Thread,\n");
+    fprintf(fpfft, "Array_Size,Radix_2_DIT_Serial,Radix_2_DIF_Serial,Radix_2_DIT_Thread,Radix_2_DIF_Thread,Radix_4_DIT_Serial,Radix_4_DIF_Serial,Radix_4_DIT_Thread,Radix_4_DIF_Thread,Radix_8_DIT_Serial,Radix_8_DIF_Serial,Radix_8_DIT_Thread,Radix_8_DIF_Thread,\n");
+
+    complexFloat *fftInput = (complexFloat*) malloc(sizeof(complexFloat) * (int)pow(2, NUM_TESTS));
+    complexFloat *spectrum = (complexFloat*) malloc(sizeof(complexFloat) * (int)pow(2, NUM_TESTS));
 
 
-    float *signal = (float*) malloc(sizeof(float) * (int)pow(2, 24));
-    complexFloat *fftInput = (complexFloat*) malloc(sizeof(complexFloat) * (int)pow(2, 24));
-    complexFloat *spectrum = (complexFloat*) malloc(sizeof(complexFloat) * (int)pow(2, 24));
+    int N = (int)pow(2, NUM_TESTS);
+    float *signal = (float*) malloc(sizeof(float) * N);
+    int frequencies[] = {4, 8, 18, 33, 152}; 
+    int num_frequencies = sizeof(frequencies) / sizeof(frequencies[0]);
 
-    for(int i = 0; i < (int)pow(2, 24); i++){
-        fscanf(fpsignal,"%f", &signal[i]);
+    for (int i = 0; i < N; i++) {
+        signal[i] = 0.0;
+        for (int j = 0; j < num_frequencies; j++) {
+            signal[i] += cos(2 * M_PI * frequencies[j] * i / N);
+        }
     }
-    fclose(fpsignal);
 
     pthread_t threads[NUM_THREADS];
     struct thread_data thread_data_array[NUM_THREADS];
     pthread_barrier_t barrier;
-    complexFloat *butterfly = malloc(sizeof(complexFloat) * (int)pow(2, 24));
+    complexFloat *butterfly = malloc(sizeof(complexFloat) * (int)pow(2, NUM_TESTS));
 
     pthread_barrier_init(&barrier, NULL, NUM_THREADS);
     int rc;
@@ -166,7 +171,7 @@ int main(int argc, char *argv[]) {
     int fftStage = 0;
     int fftLength = (int)pow(fftRadix, fftStage);
     int fftType = DIT;
-    for (fftStage = 1; fftStage <= 24; fftStage++) {
+    for (fftStage = 1; fftStage <= NUM_TESTS; fftStage++) {
         fftLength = (int)pow(fftRadix, fftStage);  // <-- move this line BEFORE printf
         width = fftLength;
         printf("OPTION %d: radix %d, fftStage=%d, fftLength=%d , DIT, Serial\n", OPTION, fftRadix, fftStage, fftLength);
@@ -175,13 +180,13 @@ int main(int argc, char *argv[]) {
             fftInput[i].im = 0;
         }
         clock_gettime(CLOCK_REALTIME, &time_start);
-        fft_radix2_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, DIT);
+        // fft_radix2_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, DIT);
         clock_gettime(CLOCK_REALTIME, &time_stop);
         time_stamp[OPTION][fftStage] = interval(time_start, time_stop);
     }
 
     OPTION++;
-    for (fftStage = 1; fftStage <= 24; fftStage++) {
+    for (fftStage = 1; fftStage <= NUM_TESTS; fftStage++) {
         fftLength = (int)pow(fftRadix, fftStage);  // <-- move this line BEFORE printf
         width = fftLength;
         printf("OPTION %d: radix %d, fftStage=%d, fftLength=%d , DIF, Serial\n", OPTION, fftRadix, fftStage, fftLength);
@@ -190,13 +195,13 @@ int main(int argc, char *argv[]) {
             fftInput[i].im = 0;
         }
         clock_gettime(CLOCK_REALTIME, &time_start);
-        fft_radix2_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, DIF);
+       // fft_radix2_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, DIF);
         clock_gettime(CLOCK_REALTIME, &time_stop);
         time_stamp[OPTION][fftStage] = interval(time_start, time_stop);
     }
 
     OPTION++;
-    for (fftStage = 1; fftStage <= 24; fftStage++) {
+    for (fftStage = 1; fftStage <= NUM_TESTS; fftStage++) {
         // Update fftLength and reassign input signal for the current stage
         fftLength = (int)pow(fftRadix, fftStage);
         width = fftLength;
@@ -232,7 +237,7 @@ int main(int argc, char *argv[]) {
     }
 
     OPTION++;
-    for (fftStage = 1; fftStage <= 24; fftStage++) {
+    for (fftStage = 1; fftStage <= NUM_TESTS; fftStage++) {
         // Update fftLength and reassign input signal for the current stage
         fftLength = (int)pow(fftRadix, fftStage);
         width = fftLength;
@@ -243,34 +248,35 @@ int main(int argc, char *argv[]) {
         }
         // Perform Radix-2 DIF FFT (Threaded)
         clock_gettime(CLOCK_REALTIME, &time_start);
-        for (t = 0; t < NUM_THREADS; t++) {
-            thread_data_array[t].thread_id = t;
-            thread_data_array[t].num_threads = NUM_THREADS;
-            thread_data_array[t].input = fftInput;
-            thread_data_array[t].output = spectrum;
-            thread_data_array[t].fftRadix = fftRadix;
-            thread_data_array[t].fftStage = fftStage;
-            thread_data_array[t].fftLength = fftLength;
-            thread_data_array[t].butterfly = butterfly;
-            thread_data_array[t].IFFT = false;
-            thread_data_array[t].barrier = &barrier;
-            rc = pthread_create(&threads[t], NULL, fft_radix2_DIF_thread, (void*) &thread_data_array[t]);
-            if (rc) {
-                printf("ERROR; return code from pthread_create() is %d\n", rc);
-                exit(-1);
-            }
-        }
-        for (t = 0; t < NUM_THREADS; t++) {
-            pthread_join(threads[t], NULL);
-        }
+        // for (t = 0; t < NUM_THREADS; t++) {
+        //     thread_data_array[t].thread_id = t;
+        //     thread_data_array[t].num_threads = NUM_THREADS;
+        //     thread_data_array[t].input = fftInput;
+        //     thread_data_array[t].output = spectrum;
+        //     thread_data_array[t].fftRadix = fftRadix;
+        //     thread_data_array[t].fftStage = fftStage;
+        //     thread_data_array[t].fftLength = fftLength;
+        //     thread_data_array[t].butterfly = butterfly;
+        //     thread_data_array[t].IFFT = false;
+        //     thread_data_array[t].barrier = &barrier;
+        //     rc = pthread_create(&threads[t], NULL, fft_radix2_DIF_thread, (void*) &thread_data_array[t]);
+        //     if (rc) {
+        //         printf("ERROR; return code from pthread_create() is %d\n", rc);
+        //         exit(-1);
+        //     }
+        // }
+        // for (t = 0; t < NUM_THREADS; t++) {
+        //     pthread_join(threads[t], NULL);
+        // }
         clock_gettime(CLOCK_REALTIME, &time_stop);
         time_stamp[OPTION][fftStage] = interval(time_start, time_stop);
     }
 
     // Add iterations for Radix-4 and Radix-8
     fftRadix = 4;
+    int NUM_TESTS_1 = floor(NUM_TESTS / 2);
     OPTION++;
-    for (fftStage = 1; fftStage <= 12; fftStage++) {
+    for (fftStage = 1; fftStage <= NUM_TESTS_1; fftStage++) {
         fftLength = (int)pow(fftRadix, fftStage);
         width = fftLength;
         printf("OPTION %d: radix %d, fftStage=%d, fftLength=%d , DIT, Serial\n", OPTION, fftRadix, fftStage, fftLength);
@@ -279,13 +285,13 @@ int main(int argc, char *argv[]) {
             fftInput[i].im = 0;
         }
         clock_gettime(CLOCK_REALTIME, &time_start);
-        fft_radix4_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, DIT);
+        // fft_radix4_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, DIT);
         clock_gettime(CLOCK_REALTIME, &time_stop);
         time_stamp[OPTION][fftStage*2] = interval(time_start, time_stop);
     }
 
     OPTION++;
-    for (fftStage = 1; fftStage <= 12; fftStage++) {
+    for (fftStage = 1; fftStage <= NUM_TESTS_1; fftStage++) {
         fftLength = (int)pow(fftRadix, fftStage);
         width = fftLength;
         printf("OPTION %d: radix %d, fftStage=%d, fftLength=%d , DIF, Serial\n", OPTION, fftRadix, fftStage, fftLength);
@@ -294,13 +300,13 @@ int main(int argc, char *argv[]) {
             fftInput[i].im = 0;
         }
         clock_gettime(CLOCK_REALTIME, &time_start);
-        fft_radix4_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, DIF);
+        //fft_radix4_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, DIF);
         clock_gettime(CLOCK_REALTIME, &time_stop);
         time_stamp[OPTION][fftStage*2] = interval(time_start, time_stop);
     }
 
     OPTION++;
-    for (fftStage = 1; fftStage <= 12; fftStage++) {
+    for (fftStage = 1; fftStage <= NUM_TESTS_1; fftStage++) {
         fftLength = (int)pow(fftRadix, fftStage);
         width = fftLength;
         printf("OPTION %d: radix %d, fftStage=%d, fftLength=%d , DIT, Thread\n", OPTION, fftRadix, fftStage, fftLength);
@@ -336,7 +342,7 @@ int main(int argc, char *argv[]) {
     }
 
     OPTION++;
-    for (fftStage = 1; fftStage <= 12; fftStage++) {
+    for (fftStage = 1; fftStage <= NUM_TESTS_1; fftStage++) {
         fftLength = (int)pow(fftRadix, fftStage);
         width = fftLength;
         printf("OPTION %d: radix %d, fftStage=%d, fftLength=%d , DIF, Thread\n", OPTION, fftRadix, fftStage, fftLength);
@@ -348,33 +354,34 @@ int main(int argc, char *argv[]) {
         }
         // Perform Radix-4 DIF FFT (Threaded)
         clock_gettime(CLOCK_REALTIME, &time_start);
-        for (t = 0; t < NUM_THREADS; t++) {
-            thread_data_array[t].thread_id = t;
-            thread_data_array[t].num_threads = NUM_THREADS;
-            thread_data_array[t].input = fftInput;
-            thread_data_array[t].output = spectrum;
-            thread_data_array[t].fftRadix = fftRadix;
-            thread_data_array[t].fftStage = fftStage;
-            thread_data_array[t].fftLength = fftLength;
-            thread_data_array[t].butterfly = butterfly;
-            thread_data_array[t].IFFT = false;
-            thread_data_array[t].barrier = &barrier;
-            rc = pthread_create(&threads[t], NULL, fft_radix4_DIF_thread, (void*) &thread_data_array[t]);
-            if (rc) {
-                printf("ERROR; return code from pthread_create() is %d\n", rc);
-                exit(-1);
-            }
-        }
-        for (t = 0; t < NUM_THREADS; t++) {
-            pthread_join(threads[t], NULL);
-        }
+        // for (t = 0; t < NUM_THREADS; t++) {
+        //     thread_data_array[t].thread_id = t;
+        //     thread_data_array[t].num_threads = NUM_THREADS;
+        //     thread_data_array[t].input = fftInput;
+        //     thread_data_array[t].output = spectrum;
+        //     thread_data_array[t].fftRadix = fftRadix;
+        //     thread_data_array[t].fftStage = fftStage;
+        //     thread_data_array[t].fftLength = fftLength;
+        //     thread_data_array[t].butterfly = butterfly;
+        //     thread_data_array[t].IFFT = false;
+        //     thread_data_array[t].barrier = &barrier;
+        //     rc = pthread_create(&threads[t], NULL, fft_radix4_DIF_thread, (void*) &thread_data_array[t]);
+        //     if (rc) {
+        //         printf("ERROR; return code from pthread_create() is %d\n", rc);
+        //         exit(-1);
+        //     }
+        // }
+        // for (t = 0; t < NUM_THREADS; t++) {
+        //     pthread_join(threads[t], NULL);
+        // }
         clock_gettime(CLOCK_REALTIME, &time_stop);
         time_stamp[OPTION][fftStage*2] = interval(time_start, time_stop);
     }
 
     fftRadix = 8;
+    NUM_TESTS_1 = floor(NUM_TESTS / 3);
     OPTION++;
-    for (fftStage = 1; fftStage <= 8; fftStage++) {
+    for (fftStage = 1; fftStage <= NUM_TESTS_1; fftStage++) {
         // Update fftLength and reassign input signal for the current stage
         fftLength = (int)pow(fftRadix, fftStage);
         width = fftLength;
@@ -386,12 +393,12 @@ int main(int argc, char *argv[]) {
         }
         // Perform Radix-8 DIT FFT
         clock_gettime(CLOCK_REALTIME, &time_start);
-        fft_radix8_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, DIT);
+        // fft_radix8_DIT(fftInput, spectrum, false, fftRadix, fftStage, fftLength, DIT);
         clock_gettime(CLOCK_REALTIME, &time_stop);
         time_stamp[OPTION][fftStage*3] = interval(time_start, time_stop);
     }
     OPTION++;
-    for (fftStage = 1; fftStage <= 8; fftStage++) {
+    for (fftStage = 1; fftStage <= NUM_TESTS_1; fftStage++) {
         // Update fftLength and reassign input signal for the current stage
         fftLength = (int)pow(fftRadix, fftStage);
         width = fftLength;
@@ -402,12 +409,12 @@ int main(int argc, char *argv[]) {
         }
         // Perform Radix-8 DIF FFT
         clock_gettime(CLOCK_REALTIME, &time_start);
-        fft_radix8_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, DIF);
+        //fft_radix8_DIF(fftInput, spectrum, false, fftRadix, fftStage, fftLength, DIF);
         clock_gettime(CLOCK_REALTIME, &time_stop);
         time_stamp[OPTION][fftStage*3] = interval(time_start, time_stop);
     }
     OPTION++;
-    for (fftStage = 1; fftStage <= 8; fftStage++) {
+    for (fftStage = 1; fftStage <= NUM_TESTS_1; fftStage++) {
         // Update fftLength and reassign input signal for the current stage
         fftLength = (int)pow(fftRadix, fftStage);
         width = fftLength;
@@ -443,7 +450,7 @@ int main(int argc, char *argv[]) {
         time_stamp[OPTION][fftStage*3] = interval(time_start, time_stop);
     }
     OPTION++;
-    for (fftStage = 1; fftStage <= 8; fftStage++) {
+    for (fftStage = 1; fftStage <= NUM_TESTS_1; fftStage++) {
         // Update fftLength and reassign input signal for the current stage
         fftLength = (int)pow(fftRadix, fftStage);
         width = fftLength;
@@ -455,26 +462,26 @@ int main(int argc, char *argv[]) {
         }
         // Perform Radix-8 DIF FFT (Threaded)
         clock_gettime(CLOCK_REALTIME, &time_start);
-        for (t = 0; t < NUM_THREADS; t++) {
-            thread_data_array[t].thread_id = t;
-            thread_data_array[t].num_threads = NUM_THREADS;
-            thread_data_array[t].input = fftInput;
-            thread_data_array[t].output = spectrum;
-            thread_data_array[t].fftRadix = fftRadix;
-            thread_data_array[t].fftStage = fftStage;
-            thread_data_array[t].fftLength = fftLength;
-            thread_data_array[t].butterfly = butterfly;
-            thread_data_array[t].IFFT = false;
-            thread_data_array[t].barrier = &barrier;
-            rc = pthread_create(&threads[t], NULL, fft_radix8_DIF_thread, (void*) &thread_data_array[t]);
-            if (rc) {
-                printf("ERROR; return code from pthread_create() is %d\n", rc);
-                exit(-1);
-            }
-        }
-        for (t = 0; t < NUM_THREADS; t++) {
-            pthread_join(threads[t], NULL);
-        }
+        // for (t = 0; t < NUM_THREADS; t++) {
+        //     thread_data_array[t].thread_id = t;
+        //     thread_data_array[t].num_threads = NUM_THREADS;
+        //     thread_data_array[t].input = fftInput;
+        //     thread_data_array[t].output = spectrum;
+        //     thread_data_array[t].fftRadix = fftRadix;
+        //     thread_data_array[t].fftStage = fftStage;
+        //     thread_data_array[t].fftLength = fftLength;
+        //     thread_data_array[t].butterfly = butterfly;
+        //     thread_data_array[t].IFFT = false;
+        //     thread_data_array[t].barrier = &barrier;
+        //     rc = pthread_create(&threads[t], NULL, fft_radix8_DIF_thread, (void*) &thread_data_array[t]);
+        //     if (rc) {
+        //         printf("ERROR; return code from pthread_create() is %d\n", rc);
+        //         exit(-1);
+        //     }
+        // }
+        // for (t = 0; t < NUM_THREADS; t++) {
+        //     pthread_join(threads[t], NULL);
+        // }
         clock_gettime(CLOCK_REALTIME, &time_stop);
         time_stamp[OPTION][fftStage*3] = interval(time_start, time_stop);
     }

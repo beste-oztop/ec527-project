@@ -168,36 +168,65 @@
 }
 
 __global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, int direction) {
-    __shared__ complexFloat sharedRow[4096];
+    extern __shared__ complexFloat sharedRow[];
 
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int tx = threadIdx.x;
-
-    if (row < height) {
-        if (tx < width)
-            sharedRow[tx] = data[row * width + tx];
-        else
-            sharedRow[tx] = {0.0f, 0.0f};
-        __syncthreads();
-
-        bitReversal(sharedRow, width); 
-
-        // Cooley-Tukey in-place 1D FFT
-        for (int s = 1; s < width; s *= 2) {
-            int pair = tx ^ s;
-            if (pair < width && (tx & (2 * s - 1)) == 0) {
-                float angle = -direction * 2.0f * PI * (tx % s) / (2.0f * s);
-                complexFloat twiddle = {cosf(angle), sinf(angle)};
-                complexFloat temp = complexMul(sharedRow[pair], twiddle);
-                complexFloat a = sharedRow[tx];
-                sharedRow[tx] = complexAdd(a, temp);
-                sharedRow[pair] = complexSub(a, temp);
+    int row = blockIdx.y;
+    int tid = threadIdx.x;
+    
+    // Check bounds
+    if (row >= height) return;
+    
+    // Each thread loads one element into shared memory
+    for (int i = tid; i < width; i += blockDim.x) {
+        sharedRow[i] = data[row * width + i];
+    }
+    __syncthreads();
+    
+    // Perform bit reversal in shared memory (one thread handles this per row)
+    if (tid == 0) {
+        unsigned int j = 0;
+        for (unsigned int i = 0; i < width; i++) {
+            if (i < j) {
+                complexFloat temp = sharedRow[i];
+                sharedRow[i] = sharedRow[j];
+                sharedRow[j] = temp;
             }
-            __syncthreads();
+            unsigned int mask = width >> 1;
+            while (j & mask) {
+                j &= ~mask;
+                mask >>= 1;
+            }
+            j |= mask;
+        }
+    }
+    __syncthreads();
+    
+    // Butterfly computation in shared memory (cooperative)
+    for (int s = 1; s < width; s *= 2) {
+        for (int i = tid; i < width; i += blockDim.x) {
+            int butterfly_size = 2 * s;
+            int butterfly_idx = i / butterfly_size;
+            int butterfly_pos = i % butterfly_size;
+            
+            if (butterfly_pos < s) {
+                int pair_idx = butterfly_idx * butterfly_size + butterfly_pos + s;
+                if (pair_idx < width) {
+                    float angle = -direction * 2.0f * PI * butterfly_pos / butterfly_size;
+                    complexFloat twiddle = {cosf(angle), sinf(angle)};
+                    
+                    complexFloat temp = complexMul(sharedRow[pair_idx], twiddle);
+                    complexFloat a = sharedRow[i];
+                    sharedRow[i] = complexAdd(a, temp);
+                    sharedRow[pair_idx] = complexSub(a, temp);
+                }
+            }
         }
         __syncthreads();
-        if (tx < width)
-            data[row * width + tx] = sharedRow[tx];
+    }
+    
+    // Write back to global memory
+    for (int i = tid; i < width; i += blockDim.x) {
+        data[row * width + i] = sharedRow[i];
     }
 }
 
@@ -275,7 +304,7 @@ __global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, in
      h_baseline_result = (complexFloat *)malloc(sizeof(complexFloat) * height * width);
      h_sm_result = (complexFloat *)malloc(sizeof(complexFloat) * height * width);
  
-     // Begin timing for Radix-2 FFT
+     /* *******************RADIX-2 FFT ********************/
      cudaEventRecord(start, 0);
      
      // First perform row-wise FFT
@@ -307,11 +336,10 @@ __global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, in
  
      // Copy Radix-2 FFT results back to host
      CUDA_SAFE_CALL(cudaMemcpy(h_radix_result, d_data, sizeof(complexFloat) * height * width, cudaMemcpyDeviceToHost));
- 
      // Reset device data for baseline
      CUDA_SAFE_CALL(cudaMemcpy(d_data, data, sizeof(complexFloat) * height * width, cudaMemcpyHostToDevice));
      
-     // Begin timing for baseline FFT
+     /* ******************* BASELINE DFT ********************/
      cudaEventRecord(start, 0);
      
      // Row-wise baseline FFT
@@ -331,48 +359,57 @@ __global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, in
  
      // Copy baseline results back to host
      CUDA_SAFE_CALL(cudaMemcpy(h_baseline_result, d_output, sizeof(complexFloat) * height * width, cudaMemcpyDeviceToHost));
- 
     // Reset device data for shared memory FFT
     CUDA_SAFE_CALL(cudaMemcpy(d_data, data, sizeof(complexFloat) * height * width, cudaMemcpyHostToDevice));
-    
-    // Begin timing for shared memory FFT
+
+    /* ******************* RADIX-2 FFT with SHARED MEMORY ********************/
     cudaEventRecord(start, 0);
-    // Shared memory FFT
-    // Host-side pseudocode
-    dim3 smBlockDim(BLOCK_SIZE, 1);
-    dim3 smGridDim((width + BLOCK_SIZE - 1) / BLOCK_SIZE, height);
-    rowFFTSharedKernel<<<smGridDim, smBlockDim>>>(d_data, width, height, 1);
 
-    // Transpose data
+    // Define block and grid dimensions for shared memory FFT
+    dim3 smBlockDim(BLOCK_SIZE);
+    dim3 smGridDim(height);
+    size_t sharedMemSize = width * sizeof(complexFloat);
+
+    // Row-wise FFT using shared memory
+    rowFFTSharedKernel<<<smGridDim, smBlockDim, sharedMemSize>>>(d_data, width, height, 1);
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+
+    // Transpose the matrix
     transposeKernel<<<transposeGridDim, transposeBlockDim>>>(d_data, d_temp, width, height);
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
-    // FFT on columns (now rows of transposed)
-    rowFFTSharedKernel<<<smGridDim, smBlockDim>>>(d_temp, height, width, 1);
+    // Column-wise FFT using shared memory (now rows of transposed matrix)
+    rowFFTSharedKernel<<<smGridDim, smBlockDim, sharedMemSize>>>(d_temp, height, width, 1);
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
 
     // Transpose back
     transposeKernel<<<transposeGridDim, transposeBlockDim>>>(d_temp, d_data, height, width);
-
     CUDA_SAFE_CALL(cudaDeviceSynchronize());
+
     cudaEventRecord(stop, 0);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&elapsedTime, start, stop);
     printf("Shared Memory FFT time: %f ms\n", elapsedTime);
+
     // Copy shared memory results back to host
     CUDA_SAFE_CALL(cudaMemcpy(h_sm_result, d_data, sizeof(complexFloat) * height * width, cudaMemcpyDeviceToHost));
 
 
+    
      // Compare results
      if (compareResults(h_radix_result, h_baseline_result, height * width)) {
          printf("Results match!\n");
      } else {
          printf("Results do not match!\n");
          
-         // Option to print the first few elements to debug
+         // Debugging option to print the first few elements
+            /*
          printf("First 5 elements comparison:\n");
          for (int i = 0; i < 5; i++) {
              printf("Radix-2[%d]: %.6f + %.6fi\n", i, h_radix_result[i].re, h_radix_result[i].im);
              printf("Baseline[%d]: %.6f + %.6fi\n", i, h_baseline_result[i].re, h_baseline_result[i].im);
          }
+            */
      }
 
     // Compare shared memory results with baseline
@@ -381,16 +418,20 @@ __global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, in
         } else {
             printf("Shared Memory results do not match with Baseline!\n");
             
-            // Option to print the first few elements to debug
+            // Debugging option to print the first few elements
+            /*
             printf("First 5 elements comparison:\n");
             for (int i = 0; i < 5; i++) {
                 printf("Shared Memory[%d]: %.6f + %.6fi\n", i, h_sm_result[i].re, h_sm_result[i].im);
                 printf("Baseline[%d]: %.6f + %.6fi\n", i, h_baseline_result[i].re, h_baseline_result[i].im);
             }
+            */
+            
         } 
  
      // Write output to file
-     FILE *outputFile = fopen("cuda_output.txt", "w");
+     /*
+    FILE *outputFile = fopen("cuda_output.txt", "w");
      if (outputFile == NULL) {
          printf("Error: Could not open file for writing.\n");
          return 1;
@@ -399,7 +440,9 @@ __global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, in
          fprintf(outputFile, "%f %f\n", h_radix_result[i].re, h_radix_result[i].im);
      }
      fclose(outputFile);
- 
+     
+     */
+
      // Free GPU memory
      CUDA_SAFE_CALL(cudaFree(d_data));
      CUDA_SAFE_CALL(cudaFree(d_temp));
@@ -409,6 +452,7 @@ __global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, in
      free(data);
      free(h_radix_result);
      free(h_baseline_result);
+     free(h_sm_result);
  
      return 0;
  }

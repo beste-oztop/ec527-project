@@ -166,26 +166,93 @@
         }
     }
 }
- 
+
+__global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, int direction) {
+    __shared__ complexFloat sharedRow[4096];
+
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int tx = threadIdx.x;
+
+    if (row < height) {
+        if (tx < width)
+            sharedRow[tx] = data[row * width + tx];
+        else
+            sharedRow[tx] = {0.0f, 0.0f};
+        __syncthreads();
+
+        bitReversal(sharedRow, width); 
+
+        // Cooley-Tukey in-place 1D FFT
+        for (int s = 1; s < width; s *= 2) {
+            int pair = tx ^ s;
+            if (pair < width && (tx & (2 * s - 1)) == 0) {
+                float angle = -direction * 2.0f * PI * (tx % s) / (2.0f * s);
+                complexFloat twiddle = {cosf(angle), sinf(angle)};
+                complexFloat temp = complexMul(sharedRow[pair], twiddle);
+                complexFloat a = sharedRow[tx];
+                sharedRow[tx] = complexAdd(a, temp);
+                sharedRow[pair] = complexSub(a, temp);
+            }
+            __syncthreads();
+        }
+        __syncthreads();
+        if (tx < width)
+            data[row * width + tx] = sharedRow[tx];
+    }
+}
+
+
+
+
  int main(int argc, char *argv[]) {
      if (argc < 2) {
          fprintf(stderr, "Usage: %s <fftlength>\n", argv[0]);
          return 1;
      }
+     
     int fftLength = atoi(argv[1]);
-    int i, j, k;
-     int N = (int)pow(2, NUM_TESTS);
-     float *signal = (float*) malloc(sizeof(float) * N*N);
+    int i, k;
+    int height = fftLength;
+    int width = fftLength;
+ 
+    // Check if the input is a power of 2
+    if (fftLength <= 0 || (fftLength & (fftLength - 1)) != 0) {
+        fprintf(stderr, "Error: FFT length must be a positive power of 2.\n");
+        return 1;
+    }
+
+    // Allocate memory for the input data
+    int N = fftLength;
+     float *signal = (float*) malloc(sizeof(float) * N * NUM_TESTS);
      int frequencies[] = {4, 8, 18, 33, 152}; 
      int num_frequencies = sizeof(frequencies) / sizeof(frequencies[0]);
      for (int k = 0; k < NUM_TESTS; k++) {
         for (int i = 0; i < N; i++) {
-            signal[i * N + k] = 0.0;
+            signal[k * N + i] = 0.0;
             for (int j = 0; j < num_frequencies; j++) {
-                signal[i * N + k] += cos(2 * M_PI * frequencies[j] * i / N);
+                signal[k * N + i] += cos(2 * M_PI * frequencies[j] * i / N);
             }
         }
      }
+
+ 
+     // Matrices for CUDA FFT
+     complexFloat *d_data, *d_temp, *d_output;
+     complexFloat *h_radix_result, *h_baseline_result, *h_sm_result;
+ 
+     // Read the matrix input data
+     complexFloat *data = (complexFloat *)malloc(sizeof(complexFloat) * fftLength * fftLength);
+     if (!data) {
+         fprintf(stderr, "Error: Memory allocation failed for data.\n");
+         return 1;
+     }
+     for (k = 0; k < NUM_TESTS; k++) {
+        for (i = 0; i < fftLength; i++) {
+            data[k * fftLength + i].re = signal[k * N + i];
+            data[k * fftLength + i].im = 0;
+        }
+     }
+ 
      // GPU Timing variables
      cudaEvent_t start, stop;
      float elapsedTime;
@@ -193,36 +260,7 @@
      // Create CUDA events
      cudaEventCreate(&start);
      cudaEventCreate(&stop);
- 
-     // Matrices for CUDA FFT
-     complexFloat *d_data, *d_temp, *d_output;
-     complexFloat *h_radix_result, *h_baseline_result;
- 
-     // Read the matrix input data
-     complexFloat *data;
-     for (k = 0; k < NUM_TESTS; k++) {
-        for (i = 0; i < fftLength; i++) {
-            data[i*fftLength + K].re = signal[i*fftLength + K];
-            data[i*fftLength + K].im = 0;
-        }
-     }
- 
 
-     /*   // Uncomment this section to generate a test signal with larger size
-    int N = (int)pow(2, NUM_TESTS);
-     float signal = (float) malloc(sizeof(float) * N);
-     int frequencies[] = {4, 8, 18, 33, 152}; 
-     int num_frequencies = sizeof(frequencies) / sizeof(frequencies[0]);
- 
-     for (int i = 0; i < N; i++) {
-         signal[i] = 0.0;
-         for (int j = 0; j < num_frequencies; j++) {
-             signal[i] += cos(2 * PI * frequencies[j] * i / N);
-         }
-     }
-
-     
-     */
 
      // Allocate memory on the GPU
      CUDA_SAFE_CALL(cudaMalloc((void**)&d_data, sizeof(complexFloat) * height * width));
@@ -235,6 +273,7 @@
      // Allocate memory for results on host
      h_radix_result = (complexFloat *)malloc(sizeof(complexFloat) * height * width);
      h_baseline_result = (complexFloat *)malloc(sizeof(complexFloat) * height * width);
+     h_sm_result = (complexFloat *)malloc(sizeof(complexFloat) * height * width);
  
      // Begin timing for Radix-2 FFT
      cudaEventRecord(start, 0);
@@ -293,6 +332,35 @@
      // Copy baseline results back to host
      CUDA_SAFE_CALL(cudaMemcpy(h_baseline_result, d_output, sizeof(complexFloat) * height * width, cudaMemcpyDeviceToHost));
  
+    // Reset device data for shared memory FFT
+    CUDA_SAFE_CALL(cudaMemcpy(d_data, data, sizeof(complexFloat) * height * width, cudaMemcpyHostToDevice));
+    
+    // Begin timing for shared memory FFT
+    cudaEventRecord(start, 0);
+    // Shared memory FFT
+    // Host-side pseudocode
+    dim3 smBlockDim(BLOCK_SIZE, 1);
+    dim3 smGridDim((width + BLOCK_SIZE - 1) / BLOCK_SIZE, height);
+    rowFFTSharedKernel<<<smGridDim, smBlockDim>>>(d_data, width, height, 1);
+
+    // Transpose data
+    transposeKernel<<<transposeGridDim, transposeBlockDim>>>(d_data, d_temp, width, height);
+
+    // FFT on columns (now rows of transposed)
+    rowFFTSharedKernel<<<smGridDim, smBlockDim>>>(d_temp, height, width, 1);
+
+    // Transpose back
+    transposeKernel<<<transposeGridDim, transposeBlockDim>>>(d_temp, d_data, height, width);
+
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    cudaEventRecord(stop, 0);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&elapsedTime, start, stop);
+    printf("Shared Memory FFT time: %f ms\n", elapsedTime);
+    // Copy shared memory results back to host
+    CUDA_SAFE_CALL(cudaMemcpy(h_sm_result, d_data, sizeof(complexFloat) * height * width, cudaMemcpyDeviceToHost));
+
+
      // Compare results
      if (compareResults(h_radix_result, h_baseline_result, height * width)) {
          printf("Results match!\n");
@@ -306,6 +374,20 @@
              printf("Baseline[%d]: %.6f + %.6fi\n", i, h_baseline_result[i].re, h_baseline_result[i].im);
          }
      }
+
+    // Compare shared memory results with baseline
+        if (compareResults(h_sm_result, h_baseline_result, height * width)) {
+            printf("Shared Memory results match with Baseline!\n");
+        } else {
+            printf("Shared Memory results do not match with Baseline!\n");
+            
+            // Option to print the first few elements to debug
+            printf("First 5 elements comparison:\n");
+            for (int i = 0; i < 5; i++) {
+                printf("Shared Memory[%d]: %.6f + %.6fi\n", i, h_sm_result[i].re, h_sm_result[i].im);
+                printf("Baseline[%d]: %.6f + %.6fi\n", i, h_baseline_result[i].re, h_baseline_result[i].im);
+            }
+        } 
  
      // Write output to file
      FILE *outputFile = fopen("cuda_output.txt", "w");

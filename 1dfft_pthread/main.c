@@ -22,7 +22,7 @@ typedef struct _complexFloat{
     float im;
 }complexFloat;
 
-#define NUM_THREADS 4   /* Ensure this matches the number of threads used in pthread_barrier_init */
+#define NUM_THREADS 8   /* Ensure this matches the number of threads used in pthread_barrier_init */
 
 struct thread_data {
     int thread_id;
@@ -405,7 +405,7 @@ int main(int argc, char *argv[]) {
     ifftOutput = NULL;
     return 0;
 }
- 
+ /*
 void* fft_radix2_DIF(void *threadarg)
 {
     struct thread_data *my_data = (struct thread_data *) threadarg;
@@ -444,7 +444,7 @@ void* fft_radix2_DIF(void *threadarg)
         int groups_per_thread = (total_groups + num_threads - 1) / num_threads;
         int group_start = thread_id * groups_per_thread;
         int group_end = (group_start + groups_per_thread > total_groups) ? total_groups : group_start + groups_per_thread;
-
+        printf("groupNum = %d, groupSize = %d, groups_per_thread = %d\n", groupNum, groupSize, groups_per_thread);
         for (int g = group_start; g < group_end; g++) {
             for (int k = 0; k < groupSize; k++) {
                 int idx0 = g * 2 * groupSize + k;
@@ -458,6 +458,77 @@ void* fft_radix2_DIF(void *threadarg)
                 butterfly[idx1] = complexMul(temp1, getWeight(1, indexWeight, fftLength));   // W1
             }
         }
+        pthread_barrier_wait(barrier); // Synchronize between stages
+    }
+
+    // Step 3: Bit-reversed output reordering
+    for (u32 i = low; i < high; i++) {
+        u32 iOrder = reverseBit(i, fftRadix, fftLength);
+        if (IFFT) {
+            output[iOrder].re = butterfly[i].re / fftLength;
+            output[iOrder].im = -butterfly[i].im / fftLength;
+        } else {
+            output[iOrder] = butterfly[i];
+        }
+    }
+
+    pthread_exit(NULL);
+}
+*/
+void* fft_radix2_DIF(void *threadarg)
+{
+    struct thread_data *my_data = (struct thread_data *) threadarg;
+    int thread_id = my_data->thread_id;
+    int num_threads = my_data->num_threads;
+    complexFloat *input = my_data->input;
+    complexFloat *output = my_data->output;
+    complexFloat *butterfly = my_data->butterfly;
+    bool IFFT = my_data->IFFT;
+    int fftRadix = my_data->fftRadix;  // Should be 2
+    int fftStage = my_data->fftStage;
+    int fftLength = my_data->fftLength;
+    pthread_barrier_t *barrier = my_data->barrier;
+
+    // Step 1: Initialize butterfly array (straight copy)
+    long int low = (thread_id * fftLength) / num_threads;
+    long int high = ((thread_id + 1) * fftLength) / num_threads;
+
+    for (u32 i = low; i < high; i++) {
+        if (IFFT) {
+            butterfly[i].re = input[i].re;
+            butterfly[i].im = -input[i].im;
+        } else {
+            butterfly[i] = input[i];
+        }
+    }
+
+    pthread_barrier_wait(barrier); // Synchronize after copy
+
+    // Step 2: FFT computation, stage-by-stage
+    for (int stage = 0; stage < fftStage; stage++) {
+        int groupNum = 1 << stage;                // 2^stage
+        int groupSize = fftLength / (2 * groupNum);
+        int total_butterflies = fftLength / 2;     // Always half of the array
+
+        int butterflies_per_thread = (total_butterflies + num_threads - 1) / num_threads;
+        int start = thread_id * butterflies_per_thread;
+        int end = (start + butterflies_per_thread > total_butterflies) ? total_butterflies : start + butterflies_per_thread;
+
+        for (int b = start; b < end; b++) {
+            int g = b / groupSize;
+            int k = b % groupSize;
+
+            int idx0 = g * 2 * groupSize + k;
+            int idx1 = idx0 + groupSize;
+            int indexWeight = k * groupNum;
+
+            complexFloat temp0 = complexAdd(butterfly[idx0], butterfly[idx1]);
+            complexFloat temp1 = complexSub(butterfly[idx0], butterfly[idx1]);
+
+            butterfly[idx0] = complexMul(temp0, getWeight(0, indexWeight, fftLength));
+            butterfly[idx1] = complexMul(temp1, getWeight(1, indexWeight, fftLength));
+        }
+
         pthread_barrier_wait(barrier); // Synchronize between stages
     }
 
@@ -512,11 +583,11 @@ void* fft_radix2_DIT(void *threadarg)
     for (int stage = 0; stage < fftStage; stage++) {
         int groupNum = pow(fftRadix, fftStage - 1 - stage);
         int groupSize = pow(fftRadix, stage);
-
         // Work on different groups per thread
         int groups_per_thread = (groupNum + num_threads - 1) / num_threads;
         int group_start = thread_id * groups_per_thread;
         int group_end = (group_start + groups_per_thread > groupNum) ? groupNum : group_start + groups_per_thread;
+        printf("groupNum = %d, groupSize = %d, groups_per_thread = %d\n", groupNum, groupSize, groups_per_thread);
 
         for (int j = group_start; j < group_end; j++) {
             for (int k = 0; k < groupSize; k++) {
@@ -591,8 +662,9 @@ void* fft_radix4_DIT(void *threadarg)
         int groups_per_thread = (groupNum + num_threads - 1) / num_threads;
         int group_start = thread_id * groups_per_thread;
         int group_end = (group_start + groups_per_thread > groupNum) ? groupNum : group_start + groups_per_thread;
-
+       // printf("groupNum = %d, groupSize = %d, groups_per_thread = %d\n", groupNum, groupSize, groups_per_thread);
         for (int j = group_start; j < group_end; j++) {
+            printf("groupNum = %d, groupSize = %d, groups_per_thread = %d\n", groupNum, groupSize, groups_per_thread);
             for (int k = 0; k < groupSize; k++) {
                 int idx[4];
                 for (int m = 0; m < 4; m++) {

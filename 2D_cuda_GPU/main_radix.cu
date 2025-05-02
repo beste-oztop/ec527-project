@@ -169,7 +169,6 @@
 
 __global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, int direction) {
     extern __shared__ complexFloat sharedRow[];
-
     int row = blockIdx.y;
     int tid = threadIdx.x;
     
@@ -182,7 +181,8 @@ __global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, in
     }
     __syncthreads();
     
-    // Perform bit reversal in shared memory (one thread handles this per row)
+    // Bit reversal in shared memory
+    // Each thread performs bit reversal on its own element
     if (tid == 0) {
         unsigned int j = 0;
         for (unsigned int i = 0; i < width; i++) {
@@ -201,7 +201,7 @@ __global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, in
     }
     __syncthreads();
     
-    // Butterfly computation in shared memory (cooperative)
+    // Butterfly computation
     for (int s = 1; s < width; s *= 2) {
         for (int i = tid; i < width; i += blockDim.x) {
             int butterfly_size = 2 * s;
@@ -213,7 +213,6 @@ __global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, in
                 if (pair_idx < width) {
                     float angle = -direction * 2.0f * PI * butterfly_pos / butterfly_size;
                     complexFloat twiddle = {cosf(angle), sinf(angle)};
-                    
                     complexFloat temp = complexMul(sharedRow[pair_idx], twiddle);
                     complexFloat a = sharedRow[i];
                     sharedRow[i] = complexAdd(a, temp);
@@ -223,7 +222,6 @@ __global__ void rowFFTSharedKernel(complexFloat *data, int width, int height, in
         }
         __syncthreads();
     }
-    
     // Write back to global memory
     for (int i = tid; i < width; i += blockDim.x) {
         data[row * width + i] = sharedRow[i];
